@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TIE Fighter - Deep Space</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #02040c; }
+    #scene { position: fixed; inset: 0; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .hud { position: fixed; inset: 0; pointer-events: none; font: 500 11px/1.15 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .16em; text-transform: uppercase; color: rgba(188, 224, 238, .75); }
+    .corner { position: absolute; width: 92px; height: 92px; opacity: .7; }
+    .corner::before, .corner::after { content: ""; position: absolute; background: #65c6d7; box-shadow: 0 0 12px #1b8e9e; }
+    .corner::before { width: 64px; height: 1px; }
+    .corner::after { width: 1px; height: 64px; }
+    .tl { left: 26px; top: 26px; } .tr { right: 26px; top: 26px; transform: scaleX(-1); }
+    .bl { left: 26px; bottom: 26px; transform: scaleY(-1); } .br { right: 26px; bottom: 26px; transform: scale(-1); }
+    .label { position: absolute; left: 48px; top: 46px; text-shadow: 0 0 12px #3fa8ba; }
+    .sub { position: absolute; left: 48px; top: 65px; color: rgba(126, 170, 185, .6); font-size: 9px; }
+    .controls { position: absolute; right: 48px; bottom: 46px; text-align: right; color: rgba(126, 170, 185, .7); font-size: 9px; line-height: 1.6; }
+    .reticle { position: absolute; left: 50%; top: 50%; width: 92px; height: 92px; transform: translate(-50%, -50%); border: 1px solid rgba(102, 186, 203, .22); border-radius: 50%; box-shadow: 0 0 25px rgba(43, 145, 165, .12), inset 0 0 22px rgba(43, 145, 165, .07); }
+    .reticle::before, .reticle::after { content: ""; position: absolute; background: rgba(124, 213, 228, .5); }
+    .reticle::before { width: 1px; height: 112px; left: 45px; top: -10px; }
+    .reticle::after { height: 1px; width: 112px; top: 45px; left: -10px; }
+    .scan { position: absolute; inset: 0; opacity: .07; background: repeating-linear-gradient(0deg, transparent 0 3px, #9ddbe4 4px 5px); mix-blend-mode: overlay; }
+    @media (max-width: 600px) { .label, .sub { left: 26px; } .controls { right: 26px; bottom: 26px; } .corner { transform: scale(.66); } .tr { transform: scale(-.66, .66); } .bl { transform: scale(.66, -.66); } .br { transform: scale(-.66); } }
+  </style>
+</head>
+<body>
+  <div id="scene"></div>
+  <div class="hud" aria-hidden="true">
+    <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+    <div class="label">Imperial Flight System</div>
+    <div class="sub">TIE / LN&nbsp;&nbsp;&middot;&nbsp;&nbsp;Deep Space Patrol</div>
+    <div class="reticle"></div><div class="scan"></div>
+    <div class="controls">Drag - облёт<br>Wheel - зум<br>RMB - панорама</div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+    const host = document.querySelector('#scene');
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.16;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    host.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, .1, 4000);
+    camera.position.set(9.0, 3.4, 13.6);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, .1, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = .045;
+    controls.minDistance = 7;
+    controls.maxDistance = 34;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = .5;
+    controls.addEventListener('start', () => controls.autoRotate = false);
+
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .58, .62, .86);
+    composer.addPass(bloom);
+
+    // --- Процедурная небула: дальний фон + мягкие отражения на остеклении и броне ---
+    function nebulaTexture() {
+      const s = 1024, cv = document.createElement('canvas'); cv.width = cv.height = s;
+      const x = cv.getContext('2d');
+      x.fillStyle = '#03040b'; x.fillRect(0, 0, s, s);
+      const tints = ['#3a1e57', '#123a63', '#0c5657', '#4a1c33'];
+      for (let i = 0; i < 24; i++) {
+        const px = Math.random() * s, py = Math.random() * s, r = 120 + Math.random() * 380;
+        const g = x.createRadialGradient(px, py, 0, px, py, r);
+        g.addColorStop(0, tints[i % tints.length]); g.addColorStop(1, 'rgba(0,0,0,0)');
+        x.globalAlpha = .05 + Math.random() * .10; x.fillStyle = g;
+        x.beginPath(); x.arc(px, py, r, 0, 7); x.fill();
+      }
+      x.globalAlpha = 1;
+      for (let i = 0; i < 1600; i++) {
+        x.fillStyle = 'rgba(255,255,255,' + (.15 + Math.random() * .6) + ')';
+        x.fillRect(Math.random() * s, Math.random() * s, Math.random() < .08 ? 1.6 : .9, .9);
+      }
+      const t = new THREE.CanvasTexture(cv);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.mapping = THREE.EquirectangularReflectionMapping;
+      return t;
+    }
+    const nebula = nebulaTexture();
+    scene.add(new THREE.Mesh(
+      new THREE.SphereGeometry(2000, 48, 32),
+      new THREE.MeshBasicMaterial({ map: nebula, side: THREE.BackSide, depthWrite: false })
+    ));
+    try {
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      scene.environment = pmrem.fromEquirectangular(nebula).texture;
+    } catch (e) { /* отражения не критичны */ }
+
+    // --- Звёздное поле: чёткие точки поверх небулы + горсть ярких навигационных звёзд ---
+    function discTexture() {
+      const s = 64, cv = document.createElement('canvas'); cv.width = cv.height = s;
+      const x = cv.getContext('2d');
+      const g = x.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+      g.addColorStop(0, '#fff'); g.addColorStop(.4, '#fff'); g.addColorStop(1, 'rgba(255,255,255,0)');
+      x.fillStyle = g; x.fillRect(0, 0, s, s);
+      return new THREE.CanvasTexture(cv);
+    }
+    const disc = discTexture();
+    function makeStars(count, rMin, rMax, size) {
+      const g = new THREE.BufferGeometry();
+      const p = new Float32Array(count * 3), c = new Float32Array(count * 3);
+      const cold = new THREE.Color(0x9ad9ff), white = new THREE.Color(0xffffff), warm = new THREE.Color(0xffcb9b);
+      for (let i = 0; i < count; i++) {
+        const r = rMin + Math.random() * (rMax - rMin);
+        const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
+        p[i * 3] = r * Math.sin(ph) * Math.cos(th);
+        p[i * 3 + 1] = r * Math.cos(ph);
+        p[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
+        const tone = Math.random();
+        (tone < .15 ? warm : tone < .5 ? cold : white).toArray(c, i * 3);
+      }
+      g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+      g.setAttribute('color', new THREE.BufferAttribute(c, 3));
+      return new THREE.Points(g, new THREE.PointsMaterial({
+        size, sizeAttenuation: true, vertexColors: true, map: disc, alphaTest: .02, transparent: true, depthWrite: false
+      }));
+    }
+    const starField = new THREE.Group();
+    starField.add(makeStars(3200, 120, 620, 1.4));
+    starField.add(makeStars(620, 80, 320, 3.0));
+    scene.add(starField);
+
+    // Далёкое солнце - основной свет в кадре
+    const sunDir = new THREE.Vector3(6, 9, 11).normalize();
+    const sun = new THREE.Sprite(new THREE.SpriteMaterial({ map: disc, color: 0xfff2dc, blending: THREE.AdditiveBlending, depthWrite: false }));
+    sun.position.copy(sunDir).multiplyScalar(1400); sun.scale.setScalar(170); scene.add(sun);
+    const sunHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: disc, color: 0x5c86c8, blending: THREE.AdditiveBlending, opacity: .5, depthWrite: false }));
+    sunHalo.position.copy(sun.position); sunHalo.scale.setScalar(500); scene.add(sunHalo);
+
+    scene.add(new THREE.HemisphereLight(0x5e9fc4, 0x050609, .55));
+    const keyLight = new THREE.DirectionalLight(0xdff0ff, 2.5);
+    keyLight.position.copy(sunDir).multiplyScalar(20); scene.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0x9fc6e8, .5);
+    fillLight.position.set(-6, -2, 9); scene.add(fillLight);
+    const rimLight = new THREE.PointLight(0x4da4d3, 24, 42, 2); rimLight.position.set(-11, 5, -11); scene.add(rimLight);
+    const engineLight = new THREE.PointLight(0xff4a1e, 22, 15, 2); engineLight.position.set(0, 0, -2.5); scene.add(engineLight);
+
+    // ================= TIE / ln =================
+    const fighter = new THREE.Group();
+    fighter.rotation.x = -.05;
+    scene.add(fighter);
+
+    const matteMetal = new THREE.MeshStandardMaterial({ color: 0x6b757c, roughness: .5, metalness: .75, envMapIntensity: .7 });
+    const edgeMetal  = new THREE.MeshStandardMaterial({ color: 0x8a969c, roughness: .38, metalness: .88, envMapIntensity: .7 });
+    const darkMetal  = new THREE.MeshStandardMaterial({ color: 0x20282d, roughness: .5, metalness: .85, envMapIntensity: .55 });
+    const panelMat   = new THREE.MeshStandardMaterial({ color: 0x141c21, roughness: .7, metalness: .5 });
+    const black      = new THREE.MeshStandardMaterial({ color: 0x05090c, roughness: .4, metalness: .8 });
+
+    // Бронированный шар кабины
+    const hull = new THREE.Mesh(new THREE.SphereGeometry(2.05, 48, 32), matteMetal);
+    hull.scale.set(1, 1, .93); fighter.add(hull);
+    const belt = new THREE.Mesh(new THREE.CylinderGeometry(2.07, 2.07, .5, 48, 1, true), darkMetal);
+    belt.scale.z = .93; fighter.add(belt);
+    const topHatch = new THREE.Mesh(new THREE.CylinderGeometry(.52, .62, .3, 8), darkMetal);
+    topHatch.position.set(0, 1.95, .05); fighter.add(topHatch);
+    const botHatch = new THREE.Mesh(new THREE.CylinderGeometry(.46, .56, .26, 8), darkMetal);
+    botHatch.position.set(0, -1.97, .05); fighter.add(botHatch);
+
+    // Кормовой узел с тремя дюзами
+    const rearCollar = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.3, .6, 32), darkMetal);
+    rearCollar.rotation.x = Math.PI / 2; rearCollar.position.z = -1.72; fighter.add(rearCollar);
+    const engMat = new THREE.MeshStandardMaterial({ color: 0x160a08, emissive: 0xff3b16, emissiveIntensity: 2.1, roughness: .6 });
+    for (const [ex, ey] of [[0, .34], [-.3, -.19], [.3, -.19]]) {
+      const e = new THREE.Mesh(new THREE.CylinderGeometry(.2, .27, .3, 22), engMat);
+      e.rotation.x = Math.PI / 2; e.position.set(ex, ey, -2.02); fighter.add(e);
+    }
+    for (let i = 0; i < 12; i++) {
+      const fin = new THREE.Mesh(new THREE.BoxGeometry(.08, .36, .5), edgeMetal);
+      const a = i / 12 * Math.PI * 2; fin.position.set(Math.cos(a) * .95, Math.sin(a) * .95, -2.26); fin.rotation.z = a; fighter.add(fin);
+    }
+
+    // --- Прицельный блистер: тёмное тонированное стекло с переплётом, НЕ прозрачный фонарь ---
+    // Посадочная плита-люк, в которую утоплено остекление
+    const hatch = new THREE.Mesh(new THREE.CylinderGeometry(1.74, 1.94, .58, 40), matteMetal);
+    hatch.rotation.x = Math.PI / 2; hatch.position.z = 1.5; fighter.add(hatch);
+
+    const viewport = new THREE.Group();
+    viewport.position.z = 1.79; viewport.scale.setScalar(1.12); fighter.add(viewport);
+    const mullionMat = new THREE.MeshStandardMaterial({ color: 0x3b454d, roughness: .45, metalness: .85, envMapIntensity: .8 });
+
+    // Канонический вытянутый по горизонтали шестиугольник TIE/ln
+    const W = 1.5, H = 1.0, C = .46;
+    const hexPts = [
+      new THREE.Vector2(-W, 0), new THREE.Vector2(-W + C, H), new THREE.Vector2(W - C, H),
+      new THREE.Vector2(W, 0), new THREE.Vector2(W - C, -H), new THREE.Vector2(-W + C, -H)
+    ];
+    const hexShape = new THREE.Shape(hexPts);
+
+    // Тонированное стекло: тёмное, зеркальное, полностью непрозрачное - ловит лишь блик солнца и слабый след небулы
+    const glass = new THREE.Mesh(new THREE.ShapeGeometry(hexShape), new THREE.MeshPhysicalMaterial({
+      color: 0x05090d, metalness: .25, roughness: .34, clearcoat: 1, clearcoatRoughness: .38,
+      envMapIntensity: 1.15, reflectivity: .4
+    }));
+    viewport.add(glass);
+    const glassTint = new THREE.Mesh(new THREE.ShapeGeometry(hexShape), new THREE.MeshBasicMaterial({ color: 0x0c2730, transparent: true, opacity: .14 }));
+    glassTint.scale.setScalar(.88); glassTint.position.z = .012; viewport.add(glassTint);
+
+    // Массивный обод по контуру шестиугольника
+    function beam(a, b, thick, mat, z) {
+      const mid = a.clone().add(b).multiplyScalar(.5);
+      const m = new THREE.Mesh(new THREE.BoxGeometry(a.distanceTo(b) + thick * 1.4, thick, thick * 1.5), mat);
+      m.position.set(mid.x, mid.y, z); m.rotation.z = Math.atan2(b.y - a.y, b.x - a.x);
+      viewport.add(m);
+    }
+    for (let i = 0; i < 6; i++) beam(hexPts[i], hexPts[(i + 1) % 6], .19, edgeMetal, .07);
+
+    // Переплёт: вертикальная стойка, горизонтальный лонжерон, две диагонали, ступица
+    viewport.add(new THREE.Mesh(new THREE.BoxGeometry(.17, H * 2 - .04, .15), mullionMat));
+    viewport.add(new THREE.Mesh(new THREE.BoxGeometry(W * 2 - .04, .17, .15), mullionMat));
+    for (const s of [-1, 1]) {
+      const d = new THREE.Mesh(new THREE.BoxGeometry(1.95, .11, .12), mullionMat);
+      d.position.z = .04; d.rotation.z = s * .62; viewport.add(d);
+    }
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(.22, .22, .18, 20), edgeMetal);
+    hub.rotation.x = Math.PI / 2; hub.position.z = .1; viewport.add(hub);
+
+    // Косой зеркальный блик по стеклу
+    const glint = new THREE.Mesh(new THREE.PlaneGeometry(2.5, .5), new THREE.MeshBasicMaterial({
+      color: 0x8fe8ff, transparent: true, opacity: .1, blending: THREE.AdditiveBlending, depthWrite: false
+    }));
+    glint.position.set(-.25, .32, .11); glint.rotation.z = .5; viewport.add(glint);
+
+    // --- Крылья-панели: шестиугольные солнечные коллекторы ---
+    function hexShapeR(radius) {
+      const s = new THREE.Shape();
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI / 6 + i * Math.PI / 3, x = Math.cos(a) * radius, y = Math.sin(a) * radius;
+        i ? s.lineTo(x, y) : s.moveTo(x, y);
+      }
+      s.closePath(); return s;
+    }
+    function wing(side) {
+      const group = new THREE.Group();
+      group.position.x = side * 4.6; fighter.add(group);
+
+      const frame = new THREE.Mesh(new THREE.ExtrudeGeometry(hexShapeR(3.0), {
+        depth: .26, bevelEnabled: true, bevelSegments: 2, bevelSize: .08, bevelThickness: .07, curveSegments: 1
+      }), edgeMetal);
+      frame.geometry.center(); group.add(frame);
+
+      const inset = new THREE.Mesh(new THREE.ExtrudeGeometry(hexShapeR(2.66), {
+        depth: .12, bevelEnabled: true, bevelSize: .03, bevelThickness: .03
+      }), panelMat);
+      inset.geometry.center(); inset.position.z = .17; group.add(inset);
+
+      const tileMat = new THREE.MeshStandardMaterial({ color: 0x0a1116, roughness: .8, metalness: .35, emissive: 0x0a1a20, emissiveIntensity: .22 });
+      for (let yy = -1.9; yy <= 1.9; yy += .52)
+        for (let xx = -1.9; xx <= 1.9; xx += .52)
+          if (Math.abs(xx) * .9 + Math.abs(yy) * .6 < 2.2) {
+            const tile = new THREE.Mesh(new THREE.BoxGeometry(.44, .44, .03), tileMat);
+            tile.position.set(xx, yy, .24); group.add(tile);
+          }
+
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI / 6 + i * Math.PI / 3;
+        const v = new THREE.Vector2(Math.cos(a) * 2.9, Math.sin(a) * 2.9);
+        const spoke = new THREE.Mesh(new THREE.BoxGeometry(v.length(), .16, .22), edgeMetal);
+        spoke.position.set(v.x / 2, v.y / 2, .12); spoke.rotation.z = Math.atan2(v.y, v.x); group.add(spoke);
+      }
+
+      const brace = new THREE.Mesh(new THREE.CylinderGeometry(.2, .28, 2.5, 14), darkMetal);
+      brace.rotation.z = Math.PI / 2; brace.position.x = -side * 2.15; group.add(brace);
+      const wHub = new THREE.Mesh(new THREE.CylinderGeometry(.46, .46, .72, 18), edgeMetal);
+      wHub.rotation.z = Math.PI / 2; group.add(wHub);
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(.36, .36, .4, 18), darkMetal);
+      collar.rotation.z = Math.PI / 2; collar.position.x = -side * 3.42; group.add(collar);
+    }
+    wing(-1); wing(1);
+
+    // --- Спаренные лазерные пушки под блистером ---
+    const emitterMat = new THREE.MeshBasicMaterial({ color: 0x3fae63 });
+    const cannons = [], muzzles = [];
+    for (const x of [-.82, .82]) {
+      const c = new THREE.Group(); c.position.set(x, -1.16, 1.62); fighter.add(c);
+      c.add(new THREE.Mesh(new THREE.SphereGeometry(.24, 16, 12), darkMetal));
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(.1, .15, 1.1, 14), black);
+      barrel.rotation.x = Math.PI / 2; barrel.position.z = .55; c.add(barrel);
+      const collar = new THREE.Mesh(new THREE.TorusGeometry(.14, .035, 8, 18), edgeMetal);
+      collar.rotation.x = Math.PI / 2; collar.position.z = .8; c.add(collar);
+      const emitter = new THREE.Mesh(new THREE.SphereGeometry(.09, 12, 10), emitterMat);
+      emitter.position.z = 1.12; c.add(emitter);
+      cannons.push({ grp: c, emitter });
+      const mz = new THREE.Object3D(); mz.position.set(x, -1.16, 2.86); fighter.add(mz); muzzles.push(mz);
+    }
+
+    // --- Пул лазерных снарядов в стиле ЗВ ---
+    const boltCoreMat = new THREE.MeshBasicMaterial({ color: 0xbfffc8 });
+    const boltGlowMat = new THREE.MeshBasicMaterial({ color: 0x1fdd3a, transparent: true, opacity: .45, blending: THREE.AdditiveBlending, depthWrite: false });
+    const BOLT_LEN = 3.4;
+    const bolts = [];
+    for (let i = 0; i < 16; i++) {
+      const g = new THREE.Group();
+      const core = new THREE.Mesh(new THREE.CylinderGeometry(.045, .045, BOLT_LEN, 10), boltCoreMat);
+      core.rotation.x = Math.PI / 2;
+      const glow = new THREE.Mesh(new THREE.CylinderGeometry(.13, .13, BOLT_LEN * 1.15, 10), boltGlowMat);
+      glow.rotation.x = Math.PI / 2;
+      g.add(core, glow); g.visible = false; scene.add(g);
+      bolts.push({ g, life: 0, vel: new THREE.Vector3() });
+    }
+    let boltIdx = 0;
+
+    const flashMat = new THREE.SpriteMaterial({ map: disc, color: 0x9dffa6, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false });
+    const flashes = [];
+    for (let i = 0; i < 8; i++) { const sp = new THREE.Sprite(flashMat.clone()); sp.visible = false; scene.add(sp); flashes.push({ sp, life: 0 }); }
+    let flashIdx = 0;
+
+    const _wp = new THREE.Vector3(), _fwd = new THREE.Vector3();
+    function fireFrom(idx) {
+      muzzles[idx].getWorldPosition(_wp);
+      fighter.getWorldDirection(_fwd);           // +Z истребителя в мире
+      const b = bolts[boltIdx++ % bolts.length];
+      b.g.position.copy(_wp).addScaledVector(_fwd, 1.4);
+      b.g.quaternion.copy(fighter.quaternion);
+      b.vel.copy(_fwd).multiplyScalar(92);
+      b.life = 2.2; b.g.visible = true;
+      const f = flashes[flashIdx++ % flashes.length];
+      f.sp.position.copy(_wp); f.sp.visible = true; f.life = .07; f.sp.scale.setScalar(.9);
+    }
+    let fireTimer = .6, fireStep = 0;
+
+    // ================= Анимация =================
+    const clock = new THREE.Clock();
+    function animate() {
+      const dt = Math.min(clock.getDelta(), .05);
+      const t = clock.elapsedTime;
+
+      fighter.position.y = Math.sin(t * .55) * .12;
+      fighter.rotation.z = Math.sin(t * .32) * .03;
+      fighter.rotation.y = Math.sin(t * .19) * .04;
+
+      engMat.emissiveIntensity = 2.0 + Math.sin(t * 9) * .35 + Math.random() * .15;
+      engineLight.intensity = 22 + Math.sin(t * 9) * 6;
+
+      // Стрельба: быстрая пара «левый-правый», затем пауза - канонический ритм ЗВ
+      fireTimer -= dt;
+      if (fireTimer <= 0) {
+        fireFrom(fireStep % 2); fireStep++;
+        fireTimer = (fireStep % 2 === 0) ? 1.15 : .1;
+      }
+      for (const b of bolts) {
+        if (b.life > 0) {
+          b.life -= dt;
+          b.g.position.addScaledVector(b.vel, dt);
+          if (b.life <= 0) b.g.visible = false;
+        }
+      }
+      for (const f of flashes) {
+        if (f.life > 0) {
+          f.life -= dt;
+          const k = Math.max(f.life / .07, 0);
+          f.sp.scale.setScalar(.4 + 1.4 * (1 - k));
+          f.sp.material.opacity = k;
+          if (f.life <= 0) f.sp.visible = false;
+        }
+      }
+      cannons.forEach((c, i) => c.emitter.scale.setScalar(.8 + Math.sin(t * 10 + i) * .2));
+      starField.rotation.y = t * .003;
+
+      controls.update();
+      composer.render();
+    }
+    renderer.setAnimationLoop(animate);
+    addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+      composer.setSize(innerWidth, innerHeight);
+    });
+  </script>
+</body>
+</html>

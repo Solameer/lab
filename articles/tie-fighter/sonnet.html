@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TIE Fighter - 3D сцена</title>
+<style>
+  html,body{margin:0;height:100%;background:#03040a;overflow:hidden}
+  #c{display:block;width:100vw;height:100vh;touch-action:none;cursor:grab}
+  #c:active{cursor:grabbing}
+  .ui{position:fixed;font:12px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;color:#8b93a1;
+      user-select:none;pointer-events:none;letter-spacing:.02em}
+  .hint{left:14px;bottom:12px}
+  .hint b{color:#cdd6e2;font-weight:600}
+  .cap{right:14px;bottom:12px;font-family:ui-monospace,Menlo,Consolas,monospace;
+       letter-spacing:.28em;color:#6f7a8a;font-size:11px}
+  .vig{position:fixed;inset:0;pointer-events:none;
+       background:radial-gradient(ellipse at 50% 44%, rgba(0,0,0,0) 46%, rgba(0,0,0,.58) 100%)}
+  .err{left:50%;top:50%;transform:translate(-50%,-50%);color:#c9d3e0;text-align:center}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="ui hint">Перетаскивай мышью - вращение вида &nbsp;·&nbsp; колесо - зум</div>
+<div class="ui cap">TIE/LN STARFIGHTER</div>
+<div class="vig"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  if (!window.THREE) {
+    document.body.insertAdjacentHTML('beforeend',
+      '<div class="ui err">Не удалось загрузить three.js (нужен интернет для CDN).</div>');
+    return;
+  }
+
+  var canvas = document.getElementById('c');
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
+
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 6000);
+  var clock = new THREE.Clock();
+
+  // ------------------------------------------------------------------
+  // Освещение: солнце в открытом космосе + холодная заливка + контровой
+  // ------------------------------------------------------------------
+  var sunDir = new THREE.Vector3(-0.46, 0.66, 0.60).normalize(); // направление НА солнце
+
+  var keyLight = new THREE.DirectionalLight(0xfff1d6, 2.5);
+  keyLight.position.copy(sunDir).multiplyScalar(60);
+  scene.add(keyLight);
+
+  var fillLight = new THREE.DirectionalLight(0x4c6bb0, 0.55);
+  fillLight.position.set(7, -4, -9);
+  scene.add(fillLight);
+
+  var rimLight = new THREE.DirectionalLight(0xa9c6ff, 0.8);
+  rimLight.position.set(-5, 2, -7);
+  scene.add(rimLight);
+
+  scene.add(new THREE.HemisphereLight(0x2b3a52, 0x05060a, 0.55));
+
+  // ------------------------------------------------------------------
+  // Отражения окружения (PMREM из canvas-эквиректангуляра):
+  // тёмный космос + тёплое пятно солнца -> блики на металле и стекле кабины
+  // ------------------------------------------------------------------
+  function makeEnvCanvas() {
+    var c = document.createElement('canvas'); c.width = 512; c.height = 256;
+    var x = c.getContext('2d');
+    var g = x.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0, '#0b1222'); g.addColorStop(0.55, '#05070d'); g.addColorStop(1, '#010205');
+    x.fillStyle = g; x.fillRect(0, 0, 512, 256);
+    // солнце в проекции equirect
+    var u = 0.5 + Math.atan2(sunDir.x, sunDir.z) / (2 * Math.PI);
+    var v = 0.5 - Math.asin(sunDir.y) / Math.PI;
+    var sx = u * 512, sy = v * 256;
+    var sg = x.createRadialGradient(sx, sy, 0, sx, sy, 140);
+    sg.addColorStop(0, 'rgba(255,246,220,1)');
+    sg.addColorStop(0.16, 'rgba(255,235,190,0.85)');
+    sg.addColorStop(0.55, 'rgba(120,125,150,0.10)');
+    sg.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = sg; x.fillRect(0, 0, 512, 256);
+    for (var i = 0; i < 70; i++) {
+      x.globalAlpha = Math.random() * 0.5 + 0.3;
+      x.fillStyle = '#fff';
+      x.fillRect(Math.random() * 512, Math.random() * 256, 1, 1);
+    }
+    x.globalAlpha = 1;
+    return c;
+  }
+  try {
+    var envTex = new THREE.CanvasTexture(makeEnvCanvas());
+    envTex.mapping = THREE.EquirectangularReflectionMapping;
+    var pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromEquirectangular(envTex).texture;
+    envTex.dispose(); pmrem.dispose();
+  } catch (e) { /* без env-карты сцена просто чуть матовее */ }
+
+  // ------------------------------------------------------------------
+  // Небосфера: почти чёрный космос с еле заметными туманностями
+  // ------------------------------------------------------------------
+  function makeSkyCanvas() {
+    var c = document.createElement('canvas'); c.width = 1024; c.height = 512;
+    var x = c.getContext('2d');
+    x.fillStyle = '#04050a'; x.fillRect(0, 0, 1024, 512);
+    var blobs = [['#132340', 0.5], ['#1c1636', 0.42], ['#0f2733', 0.36], ['#281b30', 0.32]];
+    for (var i = 0; i < 11; i++) {
+      var b = blobs[i % blobs.length];
+      var bx = Math.random() * 1024, by = Math.random() * 512, r = 130 + Math.random() * 280;
+      var rg = x.createRadialGradient(bx, by, 0, bx, by, r);
+      rg.addColorStop(0, b[0]); rg.addColorStop(1, 'rgba(0,0,0,0)');
+      x.globalAlpha = b[1] * 0.45; x.fillStyle = rg; x.fillRect(0, 0, 1024, 512);
+    }
+    x.globalAlpha = 1;
+    return c;
+  }
+  var skyTex = new THREE.CanvasTexture(makeSkyCanvas());
+  skyTex.encoding = THREE.sRGBEncoding;
+  var sky = new THREE.Mesh(
+    new THREE.SphereGeometry(2600, 40, 24),
+    new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, depthWrite: false })
+  );
+  scene.add(sky);
+
+  // ------------------------------------------------------------------
+  // Мягкая круглая «точка» для звёзд и свечения
+  // ------------------------------------------------------------------
+  function radialTex(stops, size) {
+    size = size || 64;
+    var c = document.createElement('canvas'); c.width = c.height = size;
+    var x = c.getContext('2d');
+    var g = x.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    for (var i = 0; i < stops.length; i++) g.addColorStop(stops[i][0], stops[i][1]);
+    x.fillStyle = g; x.fillRect(0, 0, size, size);
+    var t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding;
+    return t;
+  }
+  var starTex = radialTex([
+    [0, 'rgba(255,255,255,1)'], [0.25, 'rgba(255,255,255,0.85)'],
+    [0.5, 'rgba(255,255,255,0.22)'], [1, 'rgba(255,255,255,0)']
+  ]);
+
+  // ------------------------------------------------------------------
+  // Звёздное поле: три слоя (мелкие / средние / яркие)
+  // ------------------------------------------------------------------
+  function starLayer(count, pxSize, additive) {
+    var pos = new Float32Array(count * 3), col = new Float32Array(count * 3);
+    var pal = [[1, 1, 1], [0.80, 0.87, 1], [1, 0.92, 0.80], [0.70, 0.80, 1]];
+    for (var i = 0; i < count; i++) {
+      var u = Math.random() * 2 - 1, th = Math.random() * Math.PI * 2, r = 1500 + Math.random() * 400;
+      var s = Math.sqrt(1 - u * u);
+      pos[i * 3] = r * s * Math.cos(th);
+      pos[i * 3 + 1] = r * u;
+      pos[i * 3 + 2] = r * s * Math.sin(th);
+      var p = pal[(Math.random() * pal.length) | 0], b = 0.55 + Math.random() * 0.45;
+      col[i * 3] = p[0] * b; col[i * 3 + 1] = p[1] * b; col[i * 3 + 2] = p[2] * b;
+    }
+    var g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    var m = new THREE.PointsMaterial({
+      size: pxSize, map: starTex, vertexColors: true, transparent: true,
+      depthWrite: false, sizeAttenuation: false,
+      blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending
+    });
+    return new THREE.Points(g, m);
+  }
+  var starField = new THREE.Group();
+  starField.add(starLayer(4400, 1.7, false));
+  starField.add(starLayer(750, 2.7, false));
+  starField.add(starLayer(90, 4.6, true));
+  scene.add(starField);
+
+  // ------------------------------------------------------------------
+  // Солнце: ядро + гало (аддитивные спрайты, перекрываются кораблём)
+  // ------------------------------------------------------------------
+  function glowSprite(colorStop, worldSize, opacity) {
+    var t = radialTex([
+      [0, 'rgba(255,255,255,1)'], [0.2, colorStop], [1, 'rgba(0,0,0,0)']
+    ], 128);
+    var m = new THREE.SpriteMaterial({
+      map: t, transparent: true, opacity: opacity,
+      blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    var sp = new THREE.Sprite(m);
+    sp.scale.set(worldSize, worldSize, 1);
+    return sp;
+  }
+  var sunPos = sunDir.clone().multiplyScalar(2000);
+  var sunHalo = glowSprite('rgba(255,226,180,0.5)', 950, 0.55); sunHalo.position.copy(sunPos);
+  var sunCore = glowSprite('rgba(255,242,214,0.95)', 300, 0.95); sunCore.position.copy(sunPos);
+  scene.add(sunHalo, sunCore);
+
+  // ------------------------------------------------------------------
+  // Материалы корабля
+  // ------------------------------------------------------------------
+  var matHull = new THREE.MeshStandardMaterial({ color: 0x3a3e45, metalness: 0.55, roughness: 0.55, flatShading: true, envMapIntensity: 0.9 });
+  var matHullSmooth = new THREE.MeshStandardMaterial({ color: 0x33373d, metalness: 0.60, roughness: 0.5, envMapIntensity: 0.9 });
+  var matFrame = new THREE.MeshStandardMaterial({ color: 0x6b7079, metalness: 0.78, roughness: 0.38, envMapIntensity: 1.05 });
+  var matDark = new THREE.MeshStandardMaterial({ color: 0x1b1e25, metalness: 0.6, roughness: 0.6, envMapIntensity: 0.7, side: THREE.DoubleSide });
+  var matWingBack = new THREE.MeshStandardMaterial({ color: 0x090a0e, metalness: 0.3, roughness: 0.85, side: THREE.DoubleSide });
+  var matPanel = new THREE.MeshStandardMaterial({
+    color: 0x0a0c11, metalness: 0.3, roughness: 0.82,
+    emissive: 0x0a1730, emissiveIntensity: 0.07, envMapIntensity: 0.35, side: THREE.DoubleSide
+  });
+  // Ключевая деталь: остекление кабины TIE - тёмное тонированное «зеркало»,
+  // а НЕ прозрачный фонарь как у X-wing. Почти чёрное, глянцевое, с переплётом поверх.
+  var matGlass = new THREE.MeshPhysicalMaterial({
+    color: 0x03050a, metalness: 0.5, roughness: 0.05,
+    clearcoat: 1.0, clearcoatRoughness: 0.08,
+    envMapIntensity: 1.7, emissive: 0x0a1220, emissiveIntensity: 0.035
+  });
+
+  function box(w, h, d, x, y, z, rx, ry, rz, mat) {
+    var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat || matFrame);
+    m.position.set(x || 0, y || 0, z || 0);
+    m.rotation.set(rx || 0, ry || 0, rz || 0);
+    return m;
+  }
+
+  // Флэши/подсвет пушек - модульные, заполняются только для «геройского» TIE
+  var flashL, flashR, gunLight;
+  var flashState = { L: 0, R: 0 };
+  var bolts = [];
+  var BOLT_NEAR = 1.7, BOLT_FAR = 40, BOLT_SPEED = 48, NB = 3;
+
+  // ------------------------------------------------------------------
+  // Сборка одного TIE fighter
+  // ------------------------------------------------------------------
+  function buildTIE(opts) {
+    opts = opts || {};
+    var ship = new THREE.Group();
+
+    // ---- командный модуль (сферический корпус) ----
+    var pod = new THREE.Group();
+    ship.add(pod);
+    pod.add(new THREE.Mesh(new THREE.IcosahedronGeometry(1.0, 5), matHullSmooth));
+
+    pod.add(box(0.52, 0.14, 0.5, 0, 0.95, -0.05, 0, 0, 0, matHull));   // верхний люк
+    pod.add(box(0.44, 0.12, 0.44, 0, -0.96, -0.05, 0, 0, 0, matHull)); // нижний люк
+    pod.add(box(0.16, 0.16, 0.32, 0.74, 0.30, -0.42, 0, 0.5, 0, matDark));
+    pod.add(box(0.16, 0.16, 0.32, -0.74, 0.30, -0.42, 0, -0.5, 0, matDark));
+    // «бровь» и подбородок вокруг окна
+    pod.add(box(0.95, 0.13, 0.5, 0, 0.52, 0.68, -0.5, 0, 0, matHull));
+    pod.add(box(0.95, 0.15, 0.5, 0, -0.52, 0.66, 0.5, 0, 0, matHull));
+
+    // ---- остекление кабины (окно + оправа + переплёт) ----
+    var win = new THREE.Group();
+    pod.add(win);
+
+    var winMetal = new THREE.Group();      // оправа: восьмиугольные обечайки
+    winMetal.rotation.x = Math.PI / 2;
+    winMetal.position.z = 0.84;
+    var housing = new THREE.Mesh(new THREE.CylinderGeometry(0.68, 0.74, 0.28, 8), matFrame);
+    housing.rotation.y = Math.PI / 8;
+    var bezel = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.68, 0.2, 8), matDark);
+    bezel.rotation.y = Math.PI / 8; bezel.position.y = 0.11;
+    winMetal.add(housing, bezel);
+    win.add(winMetal);
+
+    // тёмное тонированное стекло (восьмиугольник) - почти чёрное зеркало
+    var pane = new THREE.Mesh(new THREE.CircleGeometry(0.56, 8), matGlass);
+    pane.rotation.z = Math.PI / 8;
+    pane.position.z = 1.0;
+    win.add(pane);
+
+    // фальш-блик на стекле: сразу читается как тонированное остекление, а не матовый люк
+    var glint = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.9, 0.34),
+      new THREE.MeshBasicMaterial({
+        map: radialTex([[0, 'rgba(150,180,220,0.5)'], [0.5, 'rgba(90,120,170,0.12)'], [1, 'rgba(0,0,0,0)']], 96),
+        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false
+      })
+    );
+    glint.position.set(-0.12, 0.16, 1.012);
+    glint.rotation.z = -0.5;
+    win.add(glint);
+
+    // переплёт поверх стекла: внешнее и внутреннее кольцо, крестовина, диагонали
+    var grid = new THREE.Group();
+    grid.position.z = 1.04;
+    win.add(grid);
+
+    var ringOut = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.036, 8, 8), matFrame);
+    ringOut.rotation.z = Math.PI / 8; grid.add(ringOut);
+    var ringIn = new THREE.Mesh(new THREE.TorusGeometry(0.29, 0.027, 8, 8), matFrame);
+    ringIn.rotation.z = Math.PI / 8; grid.add(ringIn);
+
+    grid.add(box(0.06, 1.12, 0.05, 0, 0, 0.005, 0, 0, 0, matFrame));  // вертикальная
+    grid.add(box(1.12, 0.06, 0.05, 0, 0, 0.005, 0, 0, 0, matFrame));  // горизонтальная
+    for (var k = 0; k < 4; k++) {
+      var a = Math.PI / 4 + k * Math.PI / 2;
+      grid.add(box(0.045, 0.3, 0.05, Math.cos(a) * 0.42, Math.sin(a) * 0.42, 0.005, 0, 0, a + Math.PI / 2, matFrame));
+    }
+    for (var r = 0; r < 8; r++) {
+      var ar = r * Math.PI / 4 + Math.PI / 8;
+      var rv = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 6), matDark);
+      rv.position.set(Math.cos(ar) * 0.56, Math.sin(ar) * 0.56, 0.01);
+      grid.add(rv);
+    }
+
+    // ---- спаренные подбородочные бластеры + снаряды ----
+    function cannon(sx) {
+      var g = new THREE.Group();
+      var barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.052, 0.72, 12), matFrame);
+      barrel.rotation.x = Math.PI / 2; barrel.position.z = 0.55; g.add(barrel);
+      var collar = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.16, 12), matDark);
+      collar.rotation.x = Math.PI / 2; collar.position.z = 0.24; g.add(collar);
+      var tip = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.05, 10),
+        new THREE.MeshBasicMaterial({ color: 0x1c3a22 }));
+      tip.rotation.x = Math.PI / 2; tip.position.z = 0.9; g.add(tip);
+      g.position.set(sx, -0.5, 0.62);
+      return g;
+    }
+    pod.add(cannon(-0.2), cannon(0.2));
+
+    if (opts.hero) {
+      var boltCore = new THREE.MeshBasicMaterial({ color: 0xd8ffdb });
+      var boltG1 = new THREE.MeshBasicMaterial({ color: 0x49ff5e, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false });
+      var boltG2 = new THREE.MeshBasicMaterial({ color: 0x27ff48, transparent: true, opacity: 0.13, blending: THREE.AdditiveBlending, depthWrite: false });
+
+      var gap = (BOLT_FAR - BOLT_NEAR) / NB;
+      [-0.2, 0.2].forEach(function (sx, ci) {
+        for (var i = 0; i < NB; i++) {
+          var b = new THREE.Group();
+          var c0 = new THREE.Mesh(new THREE.CylinderGeometry(0.033, 0.033, 1.55, 8), boltCore); c0.rotation.x = Math.PI / 2;
+          var c1 = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 1.9, 10), boltG1); c1.rotation.x = Math.PI / 2;
+          var c2 = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 2.3, 12), boltG2); c2.rotation.x = Math.PI / 2;
+          var head = glowSprite('rgba(90,255,120,0.85)', 0.9, 0.9);
+          b.add(c2, c1, c0, head);
+          b.userData = { sx: sx, phase: BOLT_NEAR + i * gap + (ci ? gap * 0.5 : 0) };
+          b.position.set(sx, -0.5, b.userData.phase);
+          ship.add(b);
+          bolts.push(b);
+        }
+      });
+
+      flashL = glowSprite('rgba(130,255,150,0.95)', 0.9, 0); flashL.position.set(-0.2, -0.5, 1.42);
+      flashR = glowSprite('rgba(130,255,150,0.95)', 0.9, 0); flashR.position.set(0.2, -0.5, 1.42);
+      gunLight = new THREE.PointLight(0x3bff5a, 0, 7, 2);
+      gunLight.position.set(0, -0.5, 1.5);
+      ship.add(flashL, flashR, gunLight);
+    }
+
+    // ---- пилоны от модуля к крыльям ----
+    function pylon(side) {
+      var g = new THREE.Group();
+      g.add(box(2.2, 0.34, 0.42, side * 1.85, 0, 0, 0, 0, 0, matHull));
+      var taper = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.3, 1.0, 12), matFrame);
+      taper.rotation.z = Math.PI / 2; taper.position.x = side * 1.05; g.add(taper);
+      var collar = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.3, 16), matFrame);
+      collar.rotation.z = Math.PI / 2; collar.position.x = side * 0.92; g.add(collar);
+      return g;
+    }
+    ship.add(pylon(-1), pylon(1));
+
+    // ---- крылья: шестиугольные панели солнечных батарей ----
+    function buildWing(side) {
+      var w = new THREE.Group();
+      var R = 2.4, YS = 1.15;
+      var verts = [];
+      for (var i = 0; i < 6; i++) {
+        var a = Math.PI / 6 + i * Math.PI / 3;       // остриём вверх и вниз
+        verts.push(new THREE.Vector2(Math.cos(a) * R, Math.sin(a) * R * YS));
+      }
+
+      // сплошная тыльная плита - корабль читается плотным со всех сторон
+      var backShape = new THREE.Shape();
+      verts.forEach(function (v, i) { i ? backShape.lineTo(v.x, v.y) : backShape.moveTo(v.x, v.y); });
+      backShape.lineTo(verts[0].x, verts[0].y);
+      var back = new THREE.Mesh(new THREE.ShapeGeometry(backShape), matWingBack);
+      back.position.z = -0.07; w.add(back);
+
+      // ячейки батареи (6 треугольников от центра), лёгкий разброс свечения
+      for (var c = 0; c < 6; c++) {
+        var v1 = verts[c], v2 = verts[(c + 1) % 6];
+        var sh = new THREE.Shape();
+        sh.moveTo(0, 0); sh.lineTo(v1.x, v1.y); sh.lineTo(v2.x, v2.y); sh.lineTo(0, 0);
+        var cm = matPanel.clone();
+        cm.emissiveIntensity = 0.04 + Math.random() * 0.10;
+        w.add(new THREE.Mesh(new THREE.ShapeGeometry(sh), cm));
+      }
+
+      // рамка по контуру + внутренний шестиугольник
+      function ringBeams(vs, t) {
+        for (var i = 0; i < 6; i++) {
+          var a1 = vs[i], a2 = vs[(i + 1) % 6];
+          var mid = a1.clone().add(a2).multiplyScalar(0.5);
+          var len = a1.distanceTo(a2);
+          var ang = Math.atan2(a2.y - a1.y, a2.x - a1.x);
+          w.add(box(len, t, 0.17, mid.x, mid.y, 0, 0, 0, ang, matFrame));
+        }
+      }
+      ringBeams(verts, 0.12);
+      ringBeams(verts.map(function (v) { return v.clone().multiplyScalar(0.42); }), 0.07);
+
+      // спицы центр -> вершины
+      for (var s = 0; s < 6; s++) {
+        var v = verts[s], len = v.length(), ang = Math.atan2(v.y, v.x);
+        w.add(box(len, 0.07, 0.13, v.x * 0.5, v.y * 0.5, 0, 0, 0, ang, matFrame));
+      }
+
+      // ступица
+      var hub = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.42, 18), matHull);
+      hub.rotation.x = Math.PI / 2; w.add(hub);
+      var hubCap = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.3, 0.16, 18), matFrame);
+      hubCap.rotation.x = Math.PI / 2; hubCap.position.z = 0.24; w.add(hubCap);
+
+      w.rotation.y = side * Math.PI / 2;   // нормаль панели -> вдоль оси X
+      w.position.x = side * 2.95;
+      return w;
+    }
+    ship.add(buildWing(-1), buildWing(1));
+
+    // статичные трассы для дальнего TIE (иллюзия огня)
+    if (opts.streaks) {
+      var sm = new THREE.MeshBasicMaterial({ color: 0x49ff5e, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false });
+      for (var i = 0; i < 3; i++) {
+        var st = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 3.2, 8), sm);
+        st.rotation.x = Math.PI / 2;
+        st.position.set(i % 2 ? 0.2 : -0.2, -0.5, 3 + i * 5.5);
+        ship.add(st);
+      }
+    }
+
+    return ship;
+  }
+
+  // ------------------------------------------------------------------
+  // Геройский TIE + дальний ведомый для масштаба
+  // ------------------------------------------------------------------
+  var tie = buildTIE({ hero: true });
+  scene.add(tie);
+
+  var tie2 = buildTIE({ streaks: true });
+  tie2.scale.setScalar(0.42);
+  tie2.position.set(-9.5, 3.6, -17);
+  tie2.rotation.set(0.22, 0.95, 0.5);
+  scene.add(tie2);
+
+  // ------------------------------------------------------------------
+  // Орбитальное управление мышью/касанием (своё, без зависимостей)
+  // ------------------------------------------------------------------
+  var ctl = {
+    theta: 0.18, phi: 1.44, radius: 12.5,
+    tTheta: 0.18, tPhi: 1.44, tRadius: 12.5,
+    target: new THREE.Vector3(0, -0.1, 0),
+    dragging: false, lx: 0, ly: 0, last: performance.now()
+  };
+  function onDown(e) {
+    ctl.dragging = true; ctl.lx = e.clientX; ctl.ly = e.clientY; ctl.last = performance.now();
+    if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (_) {} }
+  }
+  function onMove(e) {
+    if (!ctl.dragging) return;
+    var dx = e.clientX - ctl.lx, dy = e.clientY - ctl.ly;
+    ctl.lx = e.clientX; ctl.ly = e.clientY;
+    ctl.tTheta -= dx * 0.005;
+    ctl.tPhi -= dy * 0.005;
+    ctl.tPhi = Math.max(0.18, Math.min(Math.PI - 0.18, ctl.tPhi));
+    ctl.last = performance.now();
+  }
+  function onUp() { ctl.dragging = false; }
+  function onWheel(e) {
+    e.preventDefault();
+    ctl.tRadius *= (1 + (e.deltaY > 0 ? 1 : -1) * 0.09);
+    ctl.tRadius = Math.max(5.5, Math.min(32, ctl.tRadius));
+    ctl.last = performance.now();
+  }
+  canvas.addEventListener('pointerdown', onDown);
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  canvas.addEventListener('wheel', onWheel, { passive: false });
+
+  // ------------------------------------------------------------------
+  // Рендер-цикл
+  // ------------------------------------------------------------------
+  function resize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight, false);
+  }
+  window.addEventListener('resize', resize);
+
+  function tick() {
+    var dt = Math.min(clock.getDelta(), 0.05);
+    var t = clock.elapsedTime;
+
+    // авто-облёт, если вид давно не трогали
+    if (!ctl.dragging && performance.now() - ctl.last > 3500) ctl.tTheta += 0.0016;
+
+    var k = Math.min(1, dt * 8);
+    ctl.theta += (ctl.tTheta - ctl.theta) * k;
+    ctl.phi += (ctl.tPhi - ctl.phi) * k;
+    ctl.radius += (ctl.tRadius - ctl.radius) * k;
+
+    var sp = ctl.radius * Math.sin(ctl.phi);
+    camera.position.set(
+      ctl.target.x + sp * Math.sin(ctl.theta),
+      ctl.target.y + ctl.radius * Math.cos(ctl.phi),
+      ctl.target.z + sp * Math.cos(ctl.theta)
+    );
+    camera.lookAt(ctl.target);
+
+    // «дыхание» геройского корабля
+    tie.rotation.y = -0.16 + Math.sin(t * 0.5) * 0.04;
+    tie.rotation.x = 0.05 + Math.sin(t * 0.37) * 0.025;
+    tie.position.y = Math.sin(t * 0.8) * 0.05;
+
+    // дальний ведомый медленно кренится
+    tie2.rotation.z += dt * 0.04;
+    tie2.rotation.y += dt * 0.02;
+
+    // лёгкий параллакс звёзд
+    starField.rotation.y += dt * 0.004;
+
+    // лазерные снаряды: летят из пушек, при перезапуске - вспышка на стволе
+    flashState.L = Math.max(0, flashState.L - dt * 22);
+    flashState.R = Math.max(0, flashState.R - dt * 22);
+    for (var i = 0; i < bolts.length; i++) {
+      var b = bolts[i];
+      b.userData.phase += BOLT_SPEED * dt;
+      if (b.userData.phase > BOLT_FAR) {
+        b.userData.phase -= (BOLT_FAR - BOLT_NEAR);
+        if (b.userData.sx < 0) flashState.L = 1; else flashState.R = 1;
+      }
+      b.position.z = b.userData.phase;
+      var pulse = 1 + Math.sin((t + i) * 40) * 0.06;
+      b.children[0].scale.set(pulse, 1, pulse);
+      b.children[1].scale.set(pulse, 1, pulse);
+    }
+    if (flashL) {
+      flashL.material.opacity = flashState.L * 0.7;
+      flashR.material.opacity = flashState.R * 0.7;
+      flashL.scale.setScalar(0.35 + flashState.L * 0.8);
+      flashR.scale.setScalar(0.35 + flashState.R * 0.8);
+      gunLight.intensity = Math.max(flashState.L, flashState.R) * 2.2;
+    }
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(tick);
+  }
+  tick();
+})();
+</script>
+</body>
+</html>

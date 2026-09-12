@@ -1,0 +1,694 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>TIE/ln Starfighter — Deep Space</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #01030a; }
+  body { font-family: "Bahnschrift", "DIN Alternate", "Arial Narrow", Arial, sans-serif; color: #cfe3f5; }
+  canvas { display: block; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+
+  #hud { position: fixed; inset: 0; pointer-events: none; padding: clamp(16px, 2.6vw, 36px);
+         display: flex; flex-direction: column; justify-content: space-between; }
+  .brand { letter-spacing: .3em; font-size: 12px; color: #9fe8c8; text-transform: uppercase; }
+  .brand b { display: block; font-size: clamp(18px, 2.4vw, 30px); letter-spacing: .18em; color: #eaf6ff; font-weight: 600; margin-top: 4px; }
+  .sub { font-size: 11px; letter-spacing: .18em; color: #6f8296; margin-top: 6px; }
+
+  #panel { pointer-events: auto; align-self: flex-start; display: inline-flex; flex-direction: column; gap: 7px;
+           padding: 12px 14px; border: 1px solid rgba(120,190,220,.22); border-radius: 4px;
+           background: rgba(6,12,20,.55); backdrop-filter: blur(6px); font-size: 12px; letter-spacing: .06em; }
+  #panel label { display: flex; align-items: center; gap: 8px; cursor: pointer; color: #b9cddd; }
+  #panel input { accent-color: #4fe08a; margin: 0; }
+  .hint { font-size: 11px; letter-spacing: .1em; color: #62788c; margin-top: 4px; }
+  #fps { font-variant-numeric: tabular-nums; color: #4a5d70; }
+
+  #boot { position: fixed; inset: 0; display: grid; place-items: center; background: #01030a; z-index: 5;
+          letter-spacing: .3em; font-size: 12px; color: #7fd9b0; transition: opacity .6s ease; }
+  #boot.gone { opacity: 0; pointer-events: none; }
+  #err { max-width: 520px; text-align: center; line-height: 1.7; color: #f0a5a5; letter-spacing: .04em; }
+</style>
+</head>
+<body>
+<div id="boot"><div>ИНИЦИАЛИЗАЦИЯ ЛЁТНОЙ ПАЛУБЫ…</div></div>
+
+<div id="hud">
+  <div class="brand">Imperial Navy · Fighter Corps<b>TIE/ln Starfighter</b>
+    <div class="sub">SIENAR FLEET SYSTEMS · TWIN ION ENGINE</div>
+  </div>
+  <div>
+    <div id="panel">
+      <label><input type="checkbox" id="cbSpin" checked> облёт камерой</label>
+      <label><input type="checkbox" id="cbFire" checked> огонь из пушек</label>
+      <label><input type="checkbox" id="cbBloom" checked> свечение (bloom)</label>
+      <div class="hint">ЛКМ — вращать · колесо — зум · ПКМ — сдвиг</div>
+      <div class="hint" id="fps"></div>
+    </div>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls }    from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer }   from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }       from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass }  from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass }       from 'three/addons/postprocessing/OutputPass.js';
+
+// ───────────────────────────────────────────── базовая сцена
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = null;
+
+const camera = new THREE.PerspectiveCamera(38, innerWidth / innerHeight, 0.1, 6000);
+camera.position.set(9.6, 3.0, 12.2);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.minDistance = 5;
+controls.maxDistance = 60;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.45;
+controls.target.set(0, 0, 0);
+
+// ───────────────────────────────────────────── процедурные текстуры
+function canvas2d(w, h) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  return [c, c.getContext('2d')];
+}
+
+// панельная обшивка: базовый серый + случайные панели + линии разъёмов + мелкий шум
+function hullTexture(size = 1024, base = '#8d949c') {
+  const [c, g] = canvas2d(size, size);
+  g.fillStyle = base; g.fillRect(0, 0, size, size);
+  for (let i = 0; i < 260; i++) {
+    const w = 20 + Math.random() * 140, h = 20 + Math.random() * 140;
+    const x = Math.random() * size, y = Math.random() * size;
+    const v = (Math.random() - 0.5) * 26;
+    g.fillStyle = `rgba(${128 + v},${132 + v},${138 + v},.5)`;
+    g.fillRect(x, y, w, h);
+    g.strokeStyle = 'rgba(30,34,40,.45)'; g.lineWidth = 1.5;
+    g.strokeRect(x, y, w, h);
+  }
+  // заклёпки и потёртости
+  for (let i = 0; i < 1400; i++) {
+    const x = Math.random() * size, y = Math.random() * size, r = Math.random() * 1.6;
+    g.fillStyle = Math.random() > .5 ? 'rgba(20,24,30,.35)' : 'rgba(220,230,240,.18)';
+    g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+
+// солнечная панель крыла: тёмная сетка ячеек
+function solarTexture(size = 1024) {
+  const [c, g] = canvas2d(size, size);
+  g.fillStyle = '#16191e'; g.fillRect(0, 0, size, size);
+  const n = 16, step = size / n;
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+    const v = 18 + Math.random() * 16;
+    g.fillStyle = `rgb(${v},${v + 3},${v + 7})`;
+    g.fillRect(i * step + 2, j * step + 2, step - 4, step - 4);
+  }
+  g.strokeStyle = 'rgba(90,105,120,.25)'; g.lineWidth = 2;
+  for (let i = 0; i <= n; i++) {
+    g.beginPath(); g.moveTo(i * step, 0); g.lineTo(i * step, size); g.stroke();
+    g.beginPath(); g.moveTo(0, i * step); g.lineTo(size, i * step); g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// окружение: почти чёрный космос + далёкое солнце → даёт корректные блики на металле
+function spaceEnvironment() {
+  const [c, g] = canvas2d(1024, 512);
+  g.fillStyle = '#04060c'; g.fillRect(0, 0, 1024, 512);
+  const glow = g.createRadialGradient(180, 150, 0, 180, 150, 260);
+  glow.addColorStop(0, '#ffffff'); glow.addColorStop(.12, '#ffe9c8');
+  glow.addColorStop(.4, 'rgba(120,110,95,.28)'); glow.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = glow; g.fillRect(0, 0, 1024, 512);
+  const cold = g.createRadialGradient(760, 330, 0, 760, 330, 340);
+  cold.addColorStop(0, 'rgba(70,110,180,.30)'); cold.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = cold; g.fillRect(0, 0, 1024, 512);
+  for (let i = 0; i < 900; i++) {
+    g.fillStyle = `rgba(255,255,255,${Math.random() * .5})`;
+    g.fillRect(Math.random() * 1024, Math.random() * 512, 1, 1);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const env = pmrem.fromEquirectangular(tex).texture;
+  pmrem.dispose(); tex.dispose();
+  return env;
+}
+scene.environment = spaceEnvironment();
+
+// ───────────────────────────────────────────── свет
+const key = new THREE.DirectionalLight(0xfff2df, 4.6);
+key.position.set(7, 9, 10);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.near = 1; key.shadow.camera.far = 40;
+key.shadow.camera.left = -7; key.shadow.camera.right = 7;
+key.shadow.camera.top = 7;   key.shadow.camera.bottom = -7;
+key.shadow.bias = -0.0009;
+key.shadow.normalBias = 0.02;
+scene.add(key);
+
+const fill = new THREE.DirectionalLight(0x5a86dd, 1.15);
+fill.position.set(-9, -2, 4);
+scene.add(fill);
+
+const rim = new THREE.DirectionalLight(0xa8dcff, 2.2);
+rim.position.set(-5, 4, -10);
+scene.add(rim);
+
+scene.add(new THREE.AmbientLight(0x223046, 0.9));
+
+// ───────────────────────────────────────────── материалы
+const hullTex = hullTexture();
+hullTex.repeat.set(2, 2);
+
+const matHull = new THREE.MeshStandardMaterial({
+  color: 0xb3bcc6, map: hullTex, roughnessMap: hullTex,
+  metalness: 0.86, roughness: 0.42, envMapIntensity: 1.1
+});
+const matHullDark = new THREE.MeshStandardMaterial({
+  color: 0x7c848e, map: hullTex, roughnessMap: hullTex,
+  metalness: 0.9, roughness: 0.5, envMapIntensity: 0.9
+});
+const matPanel = new THREE.MeshStandardMaterial({
+  color: 0x2a2f36, map: solarTexture(), roughnessMap: solarTexture(),
+  metalness: 0.55, roughness: 0.62, envMapIntensity: 0.7
+});
+matPanel.map.repeat.set(0.16, 0.16);
+const matBlack = new THREE.MeshStandardMaterial({ color: 0x0d1013, metalness: 0.4, roughness: 0.75 });
+const matGun   = new THREE.MeshStandardMaterial({ color: 0x3c434b, metalness: 0.95, roughness: 0.3 });
+
+// остекление: тёмное тонированное стекло, отражающее, чуть просвечивающее
+const matGlass = new THREE.MeshPhysicalMaterial({
+  color: 0x0a1114, metalness: 0.15, roughness: 0.06,
+  clearcoat: 1.0, clearcoatRoughness: 0.04,
+  transparent: true, opacity: 0.82,
+  envMapIntensity: 2.4, side: THREE.DoubleSide
+});
+const matFrame = new THREE.MeshStandardMaterial({ color: 0x8c949e, metalness: 0.95, roughness: 0.34 });
+
+// ───────────────────────────────────────────── хелперы геометрии
+function polyShape(r, sides, rot = 0, holeR = 0) {
+  const s = new THREE.Shape();
+  for (let i = 0; i < sides; i++) {
+    const a = rot + i * Math.PI * 2 / sides;
+    const x = Math.cos(a) * r, y = Math.sin(a) * r;
+    i ? s.lineTo(x, y) : s.moveTo(x, y);
+  }
+  s.closePath();
+  if (holeR) {
+    const h = new THREE.Path();
+    for (let i = 0; i < sides; i++) {
+      const a = rot + i * Math.PI * 2 / sides;
+      const x = Math.cos(a) * holeR, y = Math.sin(a) * holeR;
+      i ? h.lineTo(x, y) : h.moveTo(x, y);
+    }
+    h.closePath(); s.holes.push(h);
+  }
+  return s;
+}
+function extrude(shape, depth, bevel = 0.02) {
+  const g = new THREE.ExtrudeGeometry(shape, {
+    depth, bevelEnabled: bevel > 0, bevelThickness: bevel, bevelSize: bevel,
+    bevelSegments: 2, curveSegments: 1
+  });
+  g.translate(0, 0, -depth / 2);
+  return g;
+}
+function mesh(geo, mat, parent, x = 0, y = 0, z = 0) {
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x, y, z);
+  m.castShadow = true; m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+// ───────────────────────────────────────────── корабль (нос по +Z)
+const ship = new THREE.Group();
+scene.add(ship);
+
+// --- корпус-шар кабины
+const ball = mesh(new THREE.SphereGeometry(1, 64, 48), matHull, ship);
+ball.scale.set(1, 1, 0.94);
+
+// боковые фланцы, к которым крепятся пилоны
+[-1, 1].forEach(s => {
+  const hub = mesh(new THREE.CylinderGeometry(0.66, 0.62, 0.28, 32), matHullDark, ship, s * 0.86, 0, 0);
+  hub.rotation.z = Math.PI / 2;
+  const ring = mesh(new THREE.TorusGeometry(0.66, 0.045, 10, 40), matFrame, ship, s * 0.94, 0, 0);
+  ring.rotation.y = Math.PI / 2;
+});
+
+// «уши» — блоки датчиков сверху и снизу шара
+[-1, 1].forEach(s => {
+  const b = mesh(new THREE.BoxGeometry(0.52, 0.18, 0.62), matHullDark, ship, 0, s * 0.94, -0.12);
+  b.rotation.x = s * 0.12;
+});
+
+// --- корма: сопла ионных двигателей
+const tailPlate = mesh(new THREE.CylinderGeometry(0.62, 0.72, 0.22, 8), matHullDark, ship, 0, 0, -0.92);
+tailPlate.rotation.x = Math.PI / 2; tailPlate.rotation.y = Math.PI / 8;
+
+const matIon = new THREE.MeshStandardMaterial({
+  color: 0x0a1418, emissive: new THREE.Color(0.12, 0.6, 1.05), emissiveIntensity: 1, roughness: 0.4
+});
+for (let i = 0; i < 3; i++) {
+  const a = -Math.PI / 2 + (i - 1) * 1.15;
+  const x = Math.cos(a) * 0.42, y = Math.sin(a) * 0.42 + 0.08;
+  const noz = mesh(new THREE.CylinderGeometry(0.15, 0.17, 0.3, 20), matHullDark, ship, x, y, -1.02);
+  noz.rotation.x = Math.PI / 2;
+  const core = mesh(new THREE.CircleGeometry(0.115, 20), matIon, ship, x, y, -1.16);
+  core.rotation.y = Math.PI;
+  core.castShadow = false;
+}
+const ionGlow = new THREE.PointLight(0x59c8ff, 2.4, 3.2, 2);
+ionGlow.position.set(0, 0.1, -1.5);
+ship.add(ionGlow);
+
+// ───────────────────────────────────────────── КАБИНА: тонированное окно с переплётом
+const cockpit = new THREE.Group();
+cockpit.position.set(0, 0, 0.83);
+ship.add(cockpit);
+
+// «воротник» вокруг остекления — восьмигранный выступ корпуса
+const collar = mesh(extrude(polyShape(0.80, 8, Math.PI / 8, 0.60), 0.22, 0.03), matHull, cockpit, 0, 0, 0.02);
+const collarLip = mesh(extrude(polyShape(0.66, 8, Math.PI / 8, 0.585), 0.10, 0.015), matFrame, cockpit, 0, 0, 0.12);
+
+// само стекло — восьмиугольная тонированная панель, посаженная в глубину воротника
+const glass = new THREE.Mesh(new THREE.CircleGeometry(0.60, 8), matGlass);
+glass.rotation.z = Math.PI / 8;
+glass.position.z = 0.06;
+cockpit.add(glass);
+
+// переплёт: обод + вертикальная стойка + две горизонтальные перекладины (сетка из 6 стёкол)
+const barZ = 0.10;
+const vBar = mesh(new THREE.BoxGeometry(0.055, 1.12, 0.07), matFrame, cockpit, 0, 0, barZ);
+[0.20, -0.20].forEach(y => {
+  const w = 1.16 - Math.abs(y) * 0.55;
+  mesh(new THREE.BoxGeometry(w, 0.05, 0.07), matFrame, cockpit, 0, y, barZ);
+});
+// короткие угловые распорки — узнаваемая «паучья» деталь фонаря TIE
+[[0.62, 0.44], [-0.62, 0.44], [0.62, -0.44], [-0.62, -0.44]].forEach(([x, y]) => {
+  const b = mesh(new THREE.BoxGeometry(0.20, 0.042, 0.06), matFrame, cockpit, x * 0.50, y * 0.62, barZ);
+  b.rotation.z = Math.atan2(y, x);
+});
+
+// внутренности кабины, различимые сквозь тонировку
+const cabin = new THREE.Group();
+cabin.position.z = -0.30;
+cockpit.add(cabin);
+const matPilot = new THREE.MeshStandardMaterial({ color: 0x090b0e, metalness: 0.2, roughness: 0.85 });
+mesh(new THREE.SphereGeometry(0.20, 24, 18), matPilot, cabin, 0, 0.06, -0.10);          // шлем
+const torso = mesh(new THREE.CapsuleGeometry(0.17, 0.22, 6, 16), matPilot, cabin, 0, -0.24, -0.18);
+torso.rotation.x = 0.2;
+mesh(new THREE.BoxGeometry(0.62, 0.14, 0.10), matPilot, cabin, 0, -0.42, 0.12);          // пульт
+// приборные огни — их видно как тусклые точки за стеклом
+const matLed = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 0.25, 0.2), toneMapped: false });
+for (let i = 0; i < 5; i++) {
+  const led = new THREE.Mesh(new THREE.CircleGeometry(0.016, 8), matLed);
+  led.position.set(-0.20 + i * 0.10, -0.40, 0.175);
+  cabin.add(led);
+}
+const cabinLight = new THREE.PointLight(0xff4a2a, 1.5, 1.6, 2);
+cabinLight.position.set(0, -0.3, 0.2);
+cabin.add(cabinLight);
+
+// ───────────────────────────────────────────── пушки
+const guns = [];
+[-1, 1].forEach(s => {
+  const x = s * 0.34, y = -0.66;
+  const barrel = mesh(new THREE.CylinderGeometry(0.052, 0.062, 0.95, 16), matGun, ship, x, y, 1.02);
+  barrel.rotation.x = Math.PI / 2;
+  const shroud = mesh(new THREE.CylinderGeometry(0.10, 0.11, 0.34, 16), matHullDark, ship, x, y, 0.72);
+  shroud.rotation.x = Math.PI / 2;
+  const tip = mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.10, 16), matBlack, ship, x, y, 1.52);
+  tip.rotation.x = Math.PI / 2;
+  guns.push(new THREE.Vector3(x, y, 1.58));
+});
+// подбрюшье, в которое утоплены орудия
+const chin = mesh(new THREE.BoxGeometry(0.92, 0.26, 0.62), matHullDark, ship, 0, -0.68, 0.55);
+chin.rotation.x = -0.10;
+
+// ───────────────────────────────────────────── пилоны и крылья
+const WING_X = 3.0, HEX_R = 3.35;
+
+[-1, 1].forEach(s => {
+  // пилон
+  const pyl = mesh(new THREE.CylinderGeometry(0.30, 0.34, 2.1, 24), matHullDark, ship, s * 1.9, 0, 0);
+  pyl.rotation.z = Math.PI / 2;
+  for (let i = 0; i < 3; i++) {
+    const r = mesh(new THREE.TorusGeometry(0.34, 0.05, 8, 28), matFrame, ship, s * (1.25 + i * 0.62), 0, 0);
+    r.rotation.y = Math.PI / 2;
+  }
+  // узел крепления крыла
+  const hub = mesh(new THREE.CylinderGeometry(0.62, 0.72, 0.42, 8), matHullDark, ship, s * WING_X, 0, 0);
+  hub.rotation.z = Math.PI / 2; hub.rotation.x = Math.PI / 8;
+
+  // крыло: собирается в плоскости XY, затем разворачивается нормалью по X
+  const wing = new THREE.Group();
+  wing.position.x = s * WING_X;
+  wing.rotation.y = Math.PI / 2;
+  ship.add(wing);
+
+  // солнечная панель
+  mesh(extrude(polyShape(HEX_R * 0.985, 6, Math.PI / 6), 0.10, 0.01), matPanel, wing);
+  // силовой обод
+  mesh(extrude(polyShape(HEX_R + 0.16, 6, Math.PI / 6, HEX_R - 0.06), 0.40, 0.03), matHull, wing);
+  // рёбра от ступицы к вершинам
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 6 + i * Math.PI / 3;
+    const len = HEX_R - 0.55;
+    [0.12, -0.12].forEach(z => {
+      const rib = mesh(new THREE.BoxGeometry(len, 0.17, 0.09), matHull, wing,
+        Math.cos(a) * (len / 2 + 0.5), Math.sin(a) * (len / 2 + 0.5), z);
+      rib.rotation.z = a;
+    });
+  }
+  // поперечные распорки между рёбрами
+  for (let i = 0; i < 6; i++) {
+    const a1 = Math.PI / 6 + i * Math.PI / 3, a2 = a1 + Math.PI / 3;
+    const r = HEX_R * 0.62;
+    const p1 = new THREE.Vector2(Math.cos(a1) * r, Math.sin(a1) * r);
+    const p2 = new THREE.Vector2(Math.cos(a2) * r, Math.sin(a2) * r);
+    const mid = p1.clone().add(p2).multiplyScalar(0.5);
+    const len = p1.distanceTo(p2);
+    [0.11, -0.11].forEach(z => {
+      const b = mesh(new THREE.BoxGeometry(len, 0.10, 0.07), matHullDark, wing, mid.x, mid.y, z);
+      b.rotation.z = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+    });
+  }
+  // ступица крыла
+  const disc = mesh(new THREE.CylinderGeometry(0.55, 0.55, 0.46, 8), matHull, wing, 0, 0, 0);
+  disc.rotation.x = Math.PI / 2;
+});
+
+// ───────────────────────────────────────────── лазерные болты
+const laserGroup = new THREE.Group();
+scene.add(laserGroup);
+
+const matCore = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.45, 3.0, 0.8), toneMapped: false });
+const matHalo = new THREE.MeshBasicMaterial({
+  color: 0x35ff7a, transparent: true, opacity: 0.16,
+  blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false
+});
+const coreGeo = new THREE.CylinderGeometry(0.05, 0.05, 2.6, 8).rotateX(Math.PI / 2);
+const haloGeo = new THREE.CylinderGeometry(0.13, 0.13, 3.0, 10).rotateX(Math.PI / 2);
+
+const bolts = [];
+for (let i = 0; i < 14; i++) {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(coreGeo, matCore));
+  g.add(new THREE.Mesh(haloGeo, matHalo));
+  g.visible = false;
+  laserGroup.add(g);
+  bolts.push({ obj: g, dir: new THREE.Vector3(), life: 0 });
+}
+
+// дульная вспышка - плоский аддитивный спрайт, а не светящийся шар
+function flashTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grd.addColorStop(0, 'rgba(235,255,240,1)');
+  grd.addColorStop(.18, 'rgba(90,255,140,.85)');
+  grd.addColorStop(.5, 'rgba(40,220,110,.18)');
+  grd.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 128, 128);
+  // короткие лучи
+  g.strokeStyle = 'rgba(180,255,200,.55)'; g.lineWidth = 2;
+  for (let i = 0; i < 4; i++) {
+    const a = i * Math.PI / 2 + Math.PI / 4;
+    g.beginPath(); g.moveTo(64, 64);
+    g.lineTo(64 + Math.cos(a) * 60, 64 + Math.sin(a) * 60); g.stroke();
+  }
+  return new THREE.CanvasTexture(c);
+}
+const flashTex = flashTexture();
+const flashes = guns.map(() => {
+  const f = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: flashTex, blending: THREE.AdditiveBlending, depthWrite: false,
+    transparent: true, toneMapped: false
+  }));
+  f.scale.setScalar(0.5);
+  f.visible = false; ship.add(f); return f;
+});
+const muzzleLight = new THREE.PointLight(0x44ff88, 0, 6, 2);
+ship.add(muzzleLight);
+
+let fireTimer = 0, flashTimer = 0, salvo = 0;
+function fire() {
+  const dir = new THREE.Vector3(0, 0, 1).applyQuaternion(ship.quaternion).normalize();
+  guns.forEach((local, i) => {
+    const b = bolts.find(b => b.life <= 0);
+    if (!b) return;
+    const world = ship.localToWorld(local.clone());
+    b.obj.position.copy(world);
+    b.obj.quaternion.copy(ship.quaternion);
+    b.obj.visible = true;
+    b.dir.copy(dir);
+    b.life = 3.4;
+    flashes[i].position.copy(local).setZ(local.z - 0.04);
+    flashes[i].visible = true;
+  });
+  flashTimer = 0.07;
+  muzzleLight.position.set(0, -0.66, 1.5);
+  muzzleLight.intensity = 22;
+}
+
+// ───────────────────────────────────────────── звёздное поле
+function starTexture() {
+  const [c, g] = canvas2d(64, 64);
+  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0, 'rgba(255,255,255,1)');
+  grd.addColorStop(.25, 'rgba(255,255,255,.85)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+const starTex = starTexture();
+
+function starLayer(count, size, radius, bright) {
+  const pos = new Float32Array(count * 3), col = new Float32Array(count * 3);
+  const tint = [[0.65, 0.78, 1.0], [1.0, 0.96, 0.9], [1.0, 0.82, 0.62], [0.85, 0.9, 1.0]];
+  for (let i = 0; i < count; i++) {
+    const u = Math.random() * 2 - 1, th = Math.random() * Math.PI * 2;
+    const r = radius * (0.7 + Math.random() * 0.6), s = Math.sqrt(1 - u * u);
+    pos.set([Math.cos(th) * s * r, u * r, Math.sin(th) * s * r], i * 3);
+    const t = tint[(Math.random() * tint.length) | 0];
+    const k = bright * (0.45 + Math.random() * 0.75);
+    col.set([t[0] * k, t[1] * k, t[2] * k], i * 3);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const mat = new THREE.PointsMaterial({
+    size, map: starTex, vertexColors: true, transparent: true,
+    depthWrite: false, blending: THREE.AdditiveBlending,
+    sizeAttenuation: false, toneMapped: false
+  });
+  const p = new THREE.Points(geo, mat);
+  p.frustumCulled = false;
+  scene.add(p);
+  return p;
+}
+starLayer(5200, 1.6, 1600, 0.55);
+starLayer(1400, 3.0, 1500, 0.9);
+starLayer(180,  6.0, 1400, 1.8);
+
+// туманность — несколько мягких аддитивных пятен на большом удалении
+function nebulaSprite(color, size, pos) {
+  const [c, g] = canvas2d(256, 256);
+  const grd = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  grd.addColorStop(0, color.replace('%A%', '.55'));
+  grd.addColorStop(.45, color.replace('%A%', '.16'));
+  grd.addColorStop(1, color.replace('%A%', '0'));
+  g.fillStyle = grd; g.fillRect(0, 0, 256, 256);
+  // рваные края, чтобы не читалось идеальным кругом
+  g.globalCompositeOperation = 'destination-out';
+  for (let i = 0; i < 90; i++) {
+    const a = Math.random() * 7, r = 60 + Math.random() * 90;
+    g.beginPath();
+    g.arc(128 + Math.cos(a) * r, 128 + Math.sin(a) * r, 18 + Math.random() * 48, 0, 7);
+    g.fillStyle = `rgba(0,0,0,${.25 + Math.random() * .5})`; g.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.45
+  }));
+  sp.scale.setScalar(size);
+  sp.position.copy(pos);
+  scene.add(sp);
+}
+nebulaSprite('rgba(70,110,240,%A%)',  900, new THREE.Vector3(-700, 260, -900));
+nebulaSprite('rgba(180,60,220,%A%)',  700, new THREE.Vector3(-420, 120, -1000));
+nebulaSprite('rgba(40,190,220,%A%)',  620, new THREE.Vector3(760, -220, -820));
+nebulaSprite('rgba(240,140,60,%A%)',  420, new THREE.Vector3(600, 380, -900));
+
+// далёкая планета с терминатором и атмосферной каймой
+function planetTexture() {
+  const [c, g] = canvas2d(1024, 512);
+  g.fillStyle = '#1b2b45'; g.fillRect(0, 0, 1024, 512);
+  for (let i = 0; i < 70; i++) {
+    const y = Math.random() * 512, h = 6 + Math.random() * 40;
+    g.fillStyle = `rgba(${30 + Math.random() * 70},${60 + Math.random() * 70},${110 + Math.random() * 90},.35)`;
+    g.fillRect(0, y, 1024, h);
+  }
+  for (let i = 0; i < 260; i++) {
+    g.beginPath();
+    g.ellipse(Math.random() * 1024, Math.random() * 512, 10 + Math.random() * 90, 4 + Math.random() * 22, Math.random() * 3, 0, 7);
+    g.fillStyle = `rgba(210,225,245,${Math.random() * .22})`; g.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const planet = new THREE.Mesh(
+  new THREE.SphereGeometry(58, 64, 48),
+  new THREE.MeshStandardMaterial({ map: planetTexture(), color: 0x77839b, roughness: 1, metalness: 0 })
+);
+planet.position.set(-780, -300, -1150);
+scene.add(planet);
+
+const atmo = new THREE.Mesh(
+  new THREE.SphereGeometry(61, 64, 48),
+  new THREE.ShaderMaterial({
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.BackSide,
+    uniforms: { uSun: { value: key.position.clone().normalize() } },
+    vertexShader: `
+      varying vec3 vN; varying vec3 vW;
+      void main(){
+        vN = normalize(normalMatrix * normal);
+        vW = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+      }`,
+    fragmentShader: `
+      uniform vec3 uSun; varying vec3 vN; varying vec3 vW;
+      void main(){
+        float fres = pow(1.0 - abs(vN.z), 3.0);
+        float sun  = clamp(dot(vW, uSun) * 0.5 + 0.5, 0.0, 1.0);
+        gl_FragColor = vec4(vec3(0.35,0.62,1.0) * fres * sun * 1.5, fres * sun);
+      }`
+  })
+);
+atmo.position.copy(planet.position);
+scene.add(atmo);
+
+// ───────────────────────────────────────────── постобработка
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.55, 0.7, 0.9);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+// ───────────────────────────────────────────── UI
+const cbSpin = document.getElementById('cbSpin');
+const cbFire = document.getElementById('cbFire');
+const cbBloom = document.getElementById('cbBloom');
+const fpsEl = document.getElementById('fps');
+cbSpin.onchange = () => controls.autoRotate = cbSpin.checked;
+cbBloom.onchange = () => bloom.enabled = cbBloom.checked;
+controls.addEventListener('start', () => { controls.autoRotate = false; cbSpin.checked = false; });
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+});
+
+// ───────────────────────────────────────────── цикл
+const clock = new THREE.Clock();
+let frames = 0, acc = 0;
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+
+  // «дыхание» корабля: лёгкая коррекция курса, а не идеально мёртвая модель
+  ship.rotation.y = Math.sin(t * 0.23) * 0.10 + 0.30;
+  ship.rotation.x = Math.sin(t * 0.31 + 1.2) * 0.055;
+  ship.rotation.z = Math.sin(t * 0.19 + 0.4) * 0.075;
+  ship.position.y = Math.sin(t * 0.5) * 0.06;
+
+  ionGlow.intensity = 2.2 + Math.sin(t * 7) * 0.5;
+  planet.rotation.y += dt * 0.004;
+
+  // огонь
+  if (cbFire.checked) {
+    fireTimer -= dt;
+    if (fireTimer <= 0) {
+      fire();
+      salvo = (salvo + 1) % 3;
+      fireTimer = salvo === 2 ? 1.9 : 0.22;   // очередь из трёх залпов, затем пауза
+    }
+  }
+  flashTimer -= dt;
+  const on = flashTimer > 0;
+  flashes.forEach(f => {
+    f.visible = on;
+    if (on) { f.scale.setScalar(0.34 + (0.07 - flashTimer) * 4.5); f.material.opacity = flashTimer / 0.07; }
+  });
+  muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt * 500);
+
+  for (const b of bolts) {
+    if (b.life <= 0) continue;
+    b.life -= dt;
+    b.obj.position.addScaledVector(b.dir, 46 * dt);
+    if (b.life <= 0) b.obj.visible = false;
+  }
+
+  controls.update();
+  composer.render();
+
+  acc += dt; frames++;
+  if (acc >= 1) { fpsEl.textContent = Math.round(frames / acc) + ' FPS'; frames = 0; acc = 0; }
+}
+
+// первый кадр — и убираем заставку
+renderer.compile(scene, camera);
+animate();
+setTimeout(() => document.getElementById('boot').classList.add('gone'), 400);
+
+addEventListener('error', e => {
+  document.getElementById('boot').classList.remove('gone');
+  document.getElementById('boot').innerHTML =
+    '<div id="err">Не удалось загрузить three.js с CDN.<br>Проверь интернет-соединение и обнови страницу.<br><br>' +
+    String(e.message || e) + '</div>';
+});
+</script>
+</body>
+</html>

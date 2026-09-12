@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Протокол исследования: кросс-модельный тест 3D-генерации</title>
+<meta name="description" content="Один промпт, пять объектов, три уровня оценки. Протокол для сравнения ИИ-моделей на задаче «собери 3D-модель». Автор - Алексей Хардиков.">
+<style>
+  :root{
+    --paper:#FBFAF7; --ink:#1A1D21; --muted:#6B7078; --rule:#DFDBD2;
+    --accent:#2F5D74; --accent-soft:#EAF0F3; --code-bg:#F3F1EC;
+    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+    --sans: -apple-system, "Segoe UI", Roboto, "Golos Text", Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --paper:#15171B; --ink:#E6E4DF; --muted:#9198A1; --rule:#2C3037;
+           --accent:#7FB4CC; --accent-soft:#1C2A32; --code-bg:#1B1E23; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+       font-size:16px;line-height:1.52;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:720px;margin:0 auto;padding:32px 24px 56px}
+
+  /* ---- шапка документа: метаданные слева, как в бланке ---- */
+  header{border-top:3px solid var(--ink);padding-top:14px;margin-bottom:28px}
+  .kicker{font:600 11px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;
+          color:var(--accent);margin-bottom:11px}
+  h1{font-family:var(--serif);font-weight:400;font-size:clamp(25px,3.8vw,33px);
+     line-height:1.18;margin:0 0 10px;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:14.5px;margin:0 0 16px;max-width:62ch}
+
+
+  /* ---- секции ---- */
+  section{margin:0 0 26px}
+  h2{font-family:var(--serif);font-weight:400;font-size:19px;margin:0 0 4px;
+     display:flex;align-items:baseline;gap:12px}
+  h2 .n{font:600 12px/1 var(--mono);color:var(--accent);letter-spacing:.1em;
+        flex:none;transform:translateY(-2px)}
+  .lead{color:var(--muted);font-size:14px;margin:0 0 11px;padding-left:32px}
+  .body{padding-left:32px}
+  @media(max-width:560px){ .lead,.body{padding-left:0} }
+
+  /* ---- промпт ---- */
+  .prompt{position:relative;background:var(--code-bg);border:1px solid var(--rule);
+          border-radius:3px;padding:14px 14px 12px}
+  .prompt pre{margin:0;padding-right:104px;font:13px/1.55 var(--mono);white-space:pre-wrap;word-break:break-word}
+  .copy{position:absolute;top:10px;right:10px;font:600 11px/1 var(--sans);
+        letter-spacing:.06em;text-transform:uppercase;color:var(--accent);
+        background:var(--paper);border:1px solid var(--rule);border-radius:3px;
+        padding:7px 11px;cursor:pointer;transition:.15s}
+  .copy:hover{border-color:var(--accent)}
+  .copy.done{color:var(--paper);background:var(--accent);border-color:var(--accent)}
+
+  /* ---- правила и уровни ---- */
+  ol.rules{margin:0;padding:0;list-style:none;counter-reset:r}
+  ol.rules li{counter-increment:r;position:relative;padding:0 0 9px 28px;margin:0}
+  ol.rules li::before{content:counter(r);position:absolute;left:0;top:1px;
+      font:600 11px/18px var(--mono);width:18px;height:18px;text-align:center;
+      color:var(--accent);background:var(--accent-soft);border-radius:2px}
+  ol.rules b{font-weight:600}
+
+  /* ---- таблица объектов ---- */
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{text-align:left;font:600 11px/1 var(--mono);letter-spacing:.12em;
+     text-transform:uppercase;color:var(--muted);padding:0 8px 7px 0;
+     border-bottom:1px solid var(--rule)}
+  td{padding:8px 8px 8px 0;border-bottom:1px solid var(--rule);vertical-align:top}
+  td:first-child{font-weight:600;white-space:nowrap;padding-right:18px}
+  tr:last-child td{border-bottom:none}
+
+  .levels{display:grid;gap:10px}
+  .level{border-left:2px solid var(--accent);padding:2px 0 2px 13px}
+  .level b{display:block;font-size:14.5px}
+  .level span{color:var(--muted);font-size:14px}
+
+  /* ---- дополнительные блоки: раскрыты всегда, на одностраничнике прятать нечего ---- */
+  .more{border-top:1px solid var(--rule);padding-top:11px;margin-top:9px}
+  .more>b{display:block;font-size:14.5px;margin-bottom:6px}
+  .more ul{margin:0;padding-left:17px}
+  .more li{margin-bottom:5px}
+  .print-only{display:none}
+
+  /* ---- блок «забрать с собой»: только экран ---- */
+  .take{border:1px solid var(--rule);border-left:3px solid var(--accent);border-radius:3px;
+        padding:15px 17px 17px;background:var(--accent-soft)}
+  .take>b{display:block;font-size:16px;margin-bottom:5px}
+  .take p{margin:0 0 12px;color:var(--muted);font-size:14px;max-width:62ch}
+  .take .btn{display:inline-block;text-decoration:none;font:600 11px/1 var(--mono);
+       letter-spacing:.09em;text-transform:uppercase;color:var(--paper);
+       background:var(--accent);border-radius:3px;padding:9px 14px}
+  .take .alt{display:block;margin-top:11px;font-size:13.5px;color:var(--accent);
+       text-decoration:none;border-bottom:1px solid transparent;width:fit-content}
+  .take .alt:hover{border-bottom-color:var(--accent)}
+
+  /* ---- колофон ---- */
+  footer{border-top:1px solid var(--rule);margin-top:38px;padding-top:14px;
+         display:flex;flex-wrap:wrap;gap:6px 26px;align-items:baseline;
+         font-size:13px;color:var(--muted)}
+  footer .who{color:var(--ink);font-weight:600}
+  footer .ver{font:11.5px/1.45 var(--mono);letter-spacing:.02em;margin-left:auto}
+  footer a{color:var(--accent);text-decoration:none;border-bottom:1px solid transparent}
+  footer a:hover{border-bottom-color:var(--accent)}
+
+  /* ---- печать: отдельный носитель, своя типографика. Цель - один лист A4 ---- */
+  @page{ size:A4; margin:11mm 13mm 9mm }
+  @media print{
+    :root{--paper:#fff;--ink:#000;--muted:#333;--rule:#b5b5b5;--accent:#000;
+          --accent-soft:#ececec;--code-bg:#f4f4f4}
+    html,body{font-size:10pt;line-height:1.36}
+    .wrap{max-width:none;padding:0}
+    .copy{display:none}
+    .screen-only{display:none}
+    .print-only{display:inline}
+
+    header{border-top-width:2pt;padding-top:5pt;margin-bottom:11pt}
+    .kicker{font-size:7pt;margin-bottom:4pt}
+    h1{font-size:16.5pt;line-height:1.12;margin:0 0 4pt}
+    .sub{font-size:9.5pt;margin:0 0 6pt;max-width:none}
+
+    section{margin:0 0 7.2pt}
+    h2{font-size:11.5pt;margin:0 0 2pt}
+    h2 .n{font-size:9pt}
+    .lead{font-size:9pt;margin:0 0 4pt;padding-left:18pt}
+    .body{padding-left:18pt}
+
+    .prompt{padding:7pt 8pt 6pt}
+    .prompt pre{font-size:9pt;line-height:1.36;padding-right:0}
+    ol.rules li{padding-bottom:3.6pt;padding-left:20pt}
+    table{font-size:9pt} th{font-size:7.5pt;padding-bottom:3pt}
+    td{padding:3pt 6pt 3pt 0}
+    .levels{gap:3.8pt} .level{padding-left:10pt}
+    .level b{font-size:9.5pt} .level span{font-size:9pt}
+
+    footer{margin-top:9pt;padding-top:5pt;font-size:7.5pt}
+    footer .ver{font-size:7.5pt;margin-left:auto}
+    /* на бумаге ссылка без адреса мертва - дописываем адрес рядом */
+    footer a::after{content:" - t.me/dr_khardikov";color:#333}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Протокол исследования</div>
+  <h1>Кросс-модельный тест: «собери 3D-модель»</h1>
+  <p class="sub">Один промпт, пять объектов, три уровня оценки. Стенд для сравнения ИИ-моделей на задаче, результат которой видно глазами.</p>
+</header>
+
+<section>
+  <h2><span class="n">01</span>Промпт</h2>
+  <p class="lead">Отправляется дословно, одинаково во все модели. Менять формулировки между прогонами нельзя - иначе сравнивать будет нечего.</p>
+  <div class="body">
+    <div class="prompt">
+      <button class="copy" id="cp">Копировать</button>
+      <pre id="pt">Сделай 3D-модель {ОБЪЕКТ} одним самодостаточным HTML-файлом, который я могу открыть прямо в браузере. Всё должно быть инлайн или подгружаться с CDN, а способ рендеринга выбираешь сам.</pre>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">02</span>Три правила честного сравнения</h2>
+  <p class="lead">Без них получится коллекция картинок, а не тест.</p>
+  <div class="body">
+    <ol class="rules">
+      <li><b>Одна попытка на модель.</b> Никаких «почини вот это» и «доработай». Итерации логируются отдельно и в зачет не идут.</li>
+      <li><b>Одинаковый режим размышления.</b> Не давайте слабой модели фору более высоким режимом: это выравнивает результат, но уничтожает сам предмет сравнения.</li>
+      <li><b>Оценка до разоблачения.</b> Сначала смотрите результаты, потом сверяетесь, где чей. Иначе имя модели работает за нее.</li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">03</span>Пять объектов</h2>
+  <p class="lead">Каждый нагружает то, чего не трогают остальные. Больше пяти - лишнее, набор начнет повторяться.</p>
+  <div class="body">
+    <table>
+      <thead><tr><th>Объект</th><th>Что проверяет</th></tr></thead>
+      <tbody>
+        <tr><td>Истребитель TIE</td><td>Следование точной детали. В промпт добавляется: «остекление кабины - темное тонированное окно с переплетом, а не прозрачный фонарь». Это ловушка: в обучающих данных кабина почти всегда прозрачная</td></tr>
+        <tr><td>Молекула ДНК</td><td>Фактическую правильность, а не красоту. Закрутка спирали должна быть правой, цепи антипараллельны. Тут есть верный ответ и неверный</td></tr>
+        <tr><td>Кристалл на постаменте</td><td>Оптику: прозрачность, преломление, внутреннее свечение, огранка. Единственный объект набора, где материал работает на просвет</td></tr>
+        <tr><td>Кольцо Всевластия</td><td>Текст без ассетов - вязь по ободу без единого файла шрифта. Плюс золото: высокая металличность, низкая шероховатость</td></tr>
+        <tr><td>Маяк ночью</td><td>Сцену вместо объекта. Луч должен реально вращаться и давать засветку. Проверяется не форма, а работающая анимация света</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2><span class="n">04</span>Три уровня оценки</h2>
+  <p class="lead">Смотреть по порядку. Первый проходит почти все - на нем приемка обычно и заканчивается, а брак живет на втором и третьем.</p>
+  <div class="body">
+    <div class="levels">
+      <div class="level"><b>Похоже ли вообще на просимое?</b><span>Силуэт, пропорции, узнаваемость с первого взгляда. Обязательно покрутите модель: брак часто не виден с половины ракурсов.</span></div>
+      <div class="level"><b>Есть ли все детали, которые обозначены в промпте?</b><span>Именно названные, а не похожие. Здесь вскрывается ловушка: модель возвращается к среднему по обучающим данным, если не дожать.</span></div>
+      <div class="level"><b>Как это сделано или собрано технически?</b><span>Выключите интернет и откройте файл заново: часть моделей собирает страницу так, что без сети она не запустится. Посмотрите, что модель добавила сверх задания и не помешало ли это разглядеть результат.</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="screen-only">
+  <h2><span class="n">05</span>Если хочется глубже</h2>
+  <div class="body">
+    <div class="more">
+      <b>Дополнения к промпту</b>
+      <ul>
+          <li><b>Сцена:</b> «Помести объект в открытый космос со звездным полем».</li>
+          <li><b>Анимация:</b> «Добавь медленное непрерывное вращение модели».</li>
+          <li><b>Освещение:</b> «Освети драматично: один ключевой источник, видимые тени, легкий контровой».</li>
+          <li><b>Сопоставимость кадров:</b> «Нейтральный серый фон, объект по центру, ракурс три четверти».</li>
+        </ul>
+    </div>
+    <div class="more">
+      <b>Что проверить, если не работает</b>
+      <ul>
+          <li><b>Пустой черный экран.</b> Проверьте интернет и обновите страницу: часть файлов подгружает код из сети и без нее не запускается. Не помогло - задание считаем невыполненным, файл обязан открываться сам.</li>
+          <li><b>Вращение мышью в базовом прогоне лучше не просить.</b> Это отдельный навык, и модели спотыкаются на нем чаще, чем на самой геометрии. Нужен осмотр со всех сторон - просите автовращение.</li>
+          <li><b>Пересвет.</b> Модель добавляет свечение по своей инициативе и засвечивает собственный объект. Если деталей не разглядеть, а убавить свечение нечем - это тоже результат, так и записывайте.</li>
+        </ul>
+    </div>
+    
+  </div>
+</section>
+
+<section class="screen-only take">
+  <b>Забрать с собой</b>
+  <p>Одностраничник для печати: промпт, правила, объекты и уровни оценки - всё, что нужно во время прогона, на одном листе.</p>
+  <a class="btn" href="protocol.pdf" download="Протокол 3D-тест.pdf">Скачать PDF</a>
+  <a class="alt" href="../../articles/tie-fighter/">Пример прогона: пять моделей собирают истребитель TIE</a>
+</section>
+
+<footer>
+  <span class="who">Алексей Хардиков</span>
+  <span>Врач по образованию, 18 лет в фармкомпаниях, 10 в научном поле. Тестирую ИИ-модели, собираю агентов. Автор РИКОН.</span>
+  <a href="https://t.me/dr_khardikov">Телеграм-канал «Второе мнение»</a>
+  <span class="ver">Версия 1.3 · 11.09.2026</span>
+  <span class="print-only">Дополнения к промпту и разбор частых сбоев - в веб-версии: solameer.github.io/lab/guides/3d-model-eval</span>
+</footer>
+
+</div>
+<script>
+  var b=document.getElementById('cp');
+  b.addEventListener('click',function(){
+    var t=document.getElementById('pt').textContent;
+    navigator.clipboard.writeText(t).then(function(){
+      b.textContent='Скопировано'; b.classList.add('done');
+      setTimeout(function(){ b.textContent='Копировать'; b.classList.remove('done'); },1800);
+    });
+  });
+</script>
+</body>
+</html>
