@@ -1,8 +1,9 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" class="so-light so-font-inter">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <meta name="description" content="Интерактивные файлы к статьям, протоколы и методички.">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="lab - Алексей Хардиков">
@@ -13,91 +14,196 @@
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <title>lab - приложения к публикациям, Алексей Хардиков</title>
+<!-- Значения цвета, кегля и формы - из tokens.css (копия кита "Второе мнение"), здесь только раскладка -->
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="fonts.css">
+<script>
+  /* светлый режим по умолчанию; тёмный - по системной настройке. Без скриптов остаётся светлый */
+  (function(){try{var m=matchMedia('(prefers-color-scheme: dark)');
+    function a(){var c=document.documentElement.classList;c.toggle('so-dark',m.matches);c.toggle('so-light',!m.matches)}
+    a();m.addEventListener('change',a)}catch(e){}})();
+</script>
 <style>
-  :root{
-    --paper:#13140F; --ink:#D6D2C0; --muted:#8E8B7C; --rule:#2E3326;
-    --accent:#8FC96B; --accent-soft:#1E2318;
-    --mono: ui-monospace,"Cascadia Mono",Consolas,"SF Mono",Menlo,monospace;
-  }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--mono);
-       font-size:16px;line-height:1.52;-webkit-font-smoothing:antialiased}
-  body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9;
-    background:repeating-linear-gradient(to bottom,rgba(255,255,255,.028) 0 1px,transparent 1px 4px)}
-  .wrap{max-width:760px;margin:0 auto;padding:32px 24px 56px;position:relative;z-index:10}
+  html{-webkit-text-size-adjust:100%}
+  body{margin:0;background-color:var(--so-bg);color:var(--so-ink);
+       font:400 17px/var(--so-lh-text) var(--so-text);-webkit-font-smoothing:antialiased;
+       text-rendering:optimizeLegibility;
+       background-image:linear-gradient(var(--so-grid-line) 1px,transparent 1px),
+                        linear-gradient(90deg,var(--so-grid-line) 1px,transparent 1px);
+       background-size:40px 40px}
+  .wrap{max-width:800px;margin:0 auto;padding:56px 24px 72px}
 
-  header{border-top:3px solid var(--ink);padding-top:14px;margin-bottom:30px}
-  .bar{display:flex;gap:9px;align-items:center;margin-bottom:13px;
-       font:11px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
-  .bar i{width:7px;height:7px;background:var(--accent);border-radius:50%;
-         box-shadow:0 0 7px var(--accent)}
-  .bar span{flex:1;height:1px;background:var(--rule)}
-  h1{font-weight:600;font-size:clamp(25px,3.8vw,32px);line-height:1.18;margin:0 0 10px}
-  .sub{color:var(--muted);font-size:14.5px;margin:0;max-width:64ch}
+  /* узкая маска под текстом, который стоит прямо на сетке (rules, раздел 1) */
+  .fx{position:relative;isolation:isolate}
+  .fx:before{content:"";position:absolute;inset:-6px -14px;z-index:-1;border-radius:22px;
+             background:var(--so-mask);filter:blur(8px)}
 
-  h2{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);
-     font-weight:600;margin:0 0 4px;padding-top:8px}
-  section{margin-bottom:30px}
+  .kick{margin:0 0 16px;font:var(--so-kick-weight) var(--so-size-kick)/1 var(--so-text);
+        letter-spacing:var(--so-kick-track);text-transform:uppercase;color:var(--so-acc);width:fit-content}
+  h1{margin:0 0 16px;font:700 var(--so-size-h1)/var(--so-lh-h1) var(--so-disp);
+     letter-spacing:var(--so-track);width:fit-content;max-width:100%}
+  .lead{margin:0;max-width:56ch;width:fit-content;font-size:19px;line-height:1.5;color:var(--so-muted)}
+  header{margin-bottom:56px}
 
-  .row{display:block;text-decoration:none;color:inherit;border-bottom:1px solid var(--rule);
-       padding:14px 0 13px;transition:.14s}
-  .row:last-child{border-bottom:none}
-  .row:hover{padding-left:7px}
-  .row:hover .t{color:var(--accent)}
-  .t{display:block;font-size:16px;font-weight:600;margin-bottom:4px}
-  .d{display:block;color:var(--muted);font-size:13.5px;line-height:1.45}
-  .m{display:block;color:var(--muted);font-size:11.5px;letter-spacing:.08em;margin-top:6px}
+  section{margin-bottom:48px}
+  .list{display:flex;flex-direction:column;gap:14px}
 
-  footer{border-top:1px solid var(--rule);margin-top:38px;padding-top:14px;
-         display:flex;flex-wrap:wrap;gap:6px 26px;align-items:baseline;
-         font-size:13px;color:var(--muted)}
-  footer .who{color:var(--ink);font-weight:600}
-  footer a{color:var(--accent);text-decoration:none;border-bottom:1px solid transparent}
-  footer a:hover{border-bottom-color:var(--accent)}
-  @media(max-width:560px){ .wrap{padding:22px 16px 40px} }
+  /* карточка-ссылка: непрозрачная подложка кита, значок на нейтральной плашке */
+  .card{display:grid;grid-template-columns:var(--so-tile) 1fr var(--so-icon);column-gap:18px;align-items:start;
+        padding:20px 22px;border-radius:var(--so-radius-card);text-decoration:none;color:inherit;
+        background:var(--so-surf);border:1px solid var(--so-cardline);box-shadow:var(--so-lift);
+        transition:border-color .15s,box-shadow .15s}
+  .card:hover{border-color:var(--so-acc);box-shadow:var(--so-lift),0 0 0 1px var(--so-acc)}
+  .card:focus-visible{outline:3px solid var(--so-acc);outline-offset:3px}
+  .tile{display:flex;width:var(--so-tile);height:var(--so-tile);align-items:center;justify-content:center;
+        border-radius:var(--so-radius-tile);background:var(--so-chip);color:var(--so-muted);transition:.15s}
+  .card:hover .tile{background:var(--so-acc-chip);color:var(--so-tint-ink)}
+  .ic{width:var(--so-icon);height:var(--so-icon);fill:none;stroke:currentColor;stroke-width:var(--so-icon-stroke);
+      stroke-linecap:round;stroke-linejoin:round;flex:none}
+  .go{color:var(--so-muted);margin-top:9px;transition:.15s}
+  .card:hover .go{color:var(--so-acc);transform:translateX(3px)}
+  .t{display:block;margin:0 0 5px;font-weight:700;font-size:20px;line-height:1.25;letter-spacing:-.01em}
+  .d{display:block;font-size:16px;line-height:1.5;color:var(--so-muted)}
+  .m{display:block;margin-top:10px;font-size:15px;line-height:1.4;color:var(--so-muted)}
+
+  /* публикации: без значка, заголовок, пилюля площадки и месяц */
+  .card.pub{grid-template-columns:1fr var(--so-icon);align-items:center}
+  .card.pub .go{margin-top:0}
+  .card.pub .t{margin-bottom:10px}
+  .card.pub .m{margin-top:0;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+  .pl{display:inline-block;padding:5px 12px;border-radius:var(--so-radius-pill);background:var(--so-chip);
+      color:var(--so-ink);font-weight:700;font-size:15px;line-height:1.2}
+
+  footer{margin-top:56px}
+  footer .who{display:block;margin:0 0 6px;font-weight:700;font-size:20px;color:var(--so-ink)}
+  footer p{margin:0 0 14px;max-width:60ch;width:fit-content;font-size:16px;line-height:1.5;color:var(--so-muted)}
+  .links{display:flex;flex-wrap:wrap;gap:6px 24px;width:fit-content;font-size:16px}
+  .links a{color:var(--so-acc);text-decoration:none;font-weight:700;border-bottom:1px solid transparent}
+  .links a:hover{border-bottom-color:var(--so-acc)}
+  .links a.minor{color:var(--so-muted);font-weight:400}
+  .links a.minor:hover{color:var(--so-ink);border-bottom-color:var(--so-muted)}
+  .links a:focus-visible{outline:3px solid var(--so-acc);outline-offset:3px;border-radius:4px}
+
+  @media(max-width:600px){
+    .wrap{padding:32px 16px 48px}
+    header{margin-bottom:40px}
+    h1{font-size:34px}
+    .lead{font-size:17px}
+    section{margin-bottom:36px}
+    .card{grid-template-columns:var(--so-tile) 1fr;padding:16px}
+    .card .go{display:none}
+    .card.pub{grid-template-columns:1fr}
+    .t{font-size:18px}
+  }
+  @media(prefers-reduced-motion:reduce){.card,.tile,.go{transition:none}}
 </style>
 </head>
 <body>
+
+<!-- значки Lucide (ISC), assets/icons кита -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-pointer" viewBox="0 0 24 24"><path d="M14 4.1 12 6"/><path d="m5.1 8-2.9-.8"/><path d="m6 12-1.9 2"/><path d="M7.2 2.2 8 5.1"/><path d="M9.037 9.69a.498.498 0 0 1 .653-.653l11 4.5a.5.5 0 0 1-.074.949l-4.349 1.041a1 1 0 0 0-.74.739l-1.04 4.35a.5.5 0 0 1-.95.074z"/></symbol>
+  <symbol id="i-clipboard" viewBox="0 0 24 24"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></symbol>
+</svg>
+
 <div class="wrap">
 
 <header>
-  <div class="bar"><i></i>lab<span></span>материалы к публикациям</div>
-  <h1>Приложения, протоколы, рабочие документы</h1>
-  <p class="sub">То, что не помещается в текст статьи: интерактивные файлы, которые можно покрутить мышкой, и документы, которые можно забрать и применить у себя. Все открывается прямо в браузере.</p>
+  <p class="kick fx">lab</p>
+  <h1 class="fx">Приложения, протоколы, рабочие документы</h1>
+  <p class="lead fx">То, что не помещается в текст статьи: интерактивные файлы, которые можно покрутить мышкой, и документы, которые можно забрать и применить у себя. Все открывается прямо в браузере.</p>
 </header>
 
+<main>
+
 <section>
-  <h2>Приложения к публикациям</h2>
-  <a class="row" href="articles/tie-fighter/">
-    <span class="t">Пять моделей собирают истребитель TIE</span>
-    <span class="d">Пять ИИ-моделей получили один и тот же промпт и одну попытку. Результаты открываются как интерактивные 3D-сцены.</span>
-    <span class="m">Прогон 09.09.2026 · 5 файлов</span>
-  </a>
+  <h2 class="kick fx">Приложения к публикациям</h2>
+  <div class="list">
+    <a class="card" href="articles/tie-fighter/">
+      <span class="tile"><svg class="ic" aria-hidden="true"><use href="#i-pointer"/></svg></span>
+      <span>
+        <span class="t">Пять моделей собирают истребитель TIE</span>
+        <span class="d">Пять ИИ-моделей получили один и тот же промпт и одну попытку. Результаты открываются как интерактивные 3D-сцены.</span>
+        <span class="m">Прогон 09.09.2026 · 5 файлов</span>
+      </span>
+      <svg class="ic go" aria-hidden="true"><use href="#i-arrow"/></svg>
+    </a>
+  </div>
 </section>
 
 <section>
-  <h2>Протоколы и методички</h2>
-  <a class="row" href="guides/3d-model-eval/">
-    <span class="t">Кросс-модельный тест: "собери 3D-модель"</span>
-    <span class="d">Один промпт, пять объектов, три уровня оценки. Стенд для сравнения ИИ-моделей на задаче, результат которой видно глазами. Есть версия для печати.</span>
-    <span class="m">Версия 1.3 · 11.09.2026 · PDF на одном листе</span>
-  </a>
-  <a class="row" href="guides/rikon-checklist/">
-    <span class="t">Чек-лист РИКОН: проверка запроса перед отправкой</span>
-    <span class="d">Пять блоков, по два вопроса на каждый и пример строки. Занимает минуту. Печатается на одном листе A4.</span>
-    <span class="m">Версия 2 · 18.10.2026 · печать в PDF</span>
-  </a>
-  <a class="row" href="guides/prompt-role-test/">
-    <span class="t">Роль в промпте: тест на пять минут</span>
-    <span class="d">Три промпта собираются из вашей задачи: без роли, с ролью-костюмом и с должностной инструкцией. Три новых чата, три вопроса к ответам.</span>
-    <span class="m">Версия 1 · 30.10.2026 · печать в PDF</span>
-  </a>
+  <h2 class="kick fx">Протоколы и методички</h2>
+  <div class="list">
+    <a class="card" href="guides/3d-model-eval/">
+      <span class="tile"><svg class="ic" aria-hidden="true"><use href="#i-clipboard"/></svg></span>
+      <span>
+        <span class="t">Кросс-модельный тест: "собери 3D-модель"</span>
+        <span class="d">Один промпт, пять объектов, три уровня оценки. Стенд для сравнения ИИ-моделей на задаче, результат которой видно глазами. Есть версия для печати.</span>
+        <span class="m">Версия 1.3 · 11.09.2026 · PDF на одном листе</span>
+      </span>
+      <svg class="ic go" aria-hidden="true"><use href="#i-arrow"/></svg>
+    </a>
+    <a class="card" href="guides/rikon-checklist/">
+      <span class="tile"><svg class="ic" aria-hidden="true"><use href="#i-check"/></svg></span>
+      <span>
+        <span class="t">Чек-лист РИКОН: проверка запроса перед отправкой</span>
+        <span class="d">Пять блоков, по два вопроса на каждый и пример строки. Занимает минуту. Печатается на одном листе A4.</span>
+        <span class="m">Версия 2 · 18.10.2026 · печать в PDF</span>
+      </span>
+      <svg class="ic go" aria-hidden="true"><use href="#i-arrow"/></svg>
+    </a>
+    <a class="card" href="guides/prompt-role-test/">
+      <span class="tile"><svg class="ic" aria-hidden="true"><use href="#i-message"/></svg></span>
+      <span>
+        <span class="t">Роль в промпте: тест на пять минут</span>
+        <span class="d">Три промпта собираются из вашей задачи: без роли, с ролью-костюмом и с должностной инструкцией. Три новых чата, три вопроса к ответам.</span>
+        <span class="m">Версия 1 · 30.10.2026 · печать в PDF</span>
+      </span>
+      <svg class="ic go" aria-hidden="true"><use href="#i-arrow"/></svg>
+    </a>
+  </div>
 </section>
+
+<section>
+  <h2 class="kick fx">Публикации</h2>
+  <div class="list">
+    <a class="card pub" href="https://vc.ru/ai/3232411-rol-neyroseti-v-promptakh" target="_blank" rel="noopener">
+      <span>
+        <span class="t">Нейросеть в костюме эксперта: что меняет роль в промпте и как написать ее с толком</span>
+        <span class="m"><span class="pl">VC.ru</span>ноябрь 2026</span>
+      </span>
+      <svg class="ic go" aria-hidden="true"><use href="#i-arrow"/></svg>
+    </a>
+    <a class="card pub" href="https://vc.ru/food/2940636-zavtrak-s-ovsyankoy-i-bananom-nedostatok-belka" target="_blank" rel="noopener">
+      <span>
+        <span class="t">Три источника углеводов и ноль белка: разбираю завтрак, который все считают правильным</span>
+        <span class="m"><span class="pl">VC.ru</span>май 2026</span>
+      </span>
+      <svg class="ic go" aria-hidden="true"><use href="#i-arrow"/></svg>
+    </a>
+    <a class="card pub" href="https://vc.ru/ai/2920905-rikon-effektivnyj-prompting-dlja-raboty-s-ii" target="_blank" rel="noopener">
+      <span>
+        <span class="t">РИКОН: русскоязычная система промптинга для тех, кто устал переделывать ответы ИИ</span>
+        <span class="m"><span class="pl">VC.ru</span>май 2026</span>
+      </span>
+      <svg class="ic go" aria-hidden="true"><use href="#i-arrow"/></svg>
+    </a>
+  </div>
+</section>
+
+</main>
 
 <footer>
-  <span class="who">Алексей Хардиков</span>
-  <span>Врач по образованию, 18 лет в фармкомпаниях, 10 в научном поле. Тестирую ИИ-модели, собираю агентов. Автор РИКОН.</span>
-  <a href="https://t.me/dr_khardikov">Телеграм-канал "Второе мнение"</a>
+  <span class="who fx">Алексей Хардиков</span>
+  <p class="fx">Врач по образованию, 18 лет в фармкомпаниях, 10 в научном поле. Тестирую ИИ-модели, собираю агентов. Автор РИКОН.</p>
+  <div class="links fx">
+    <a href="mailto:khardikov.alex@gmail.com">khardikov.alex@gmail.com</a>
+    <a class="minor" href="https://t.me/dr_khardikov">Телеграм-канал "Второе мнение"</a>
+  </div>
 </footer>
 
 </div>
